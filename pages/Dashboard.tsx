@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { User, PlaceResult } from '../types';
-import { startLiveMonitoring, getNearbyStations } from '../services/gemini';
-import { sendMessage } from '../services/storage';
+import React, { useEffect, useRef, useState } from 'react';
+import { getNearbyStations, startLiveMonitoring } from '../services/gemini';
+import { sendAlert, sendMessage } from '../services/storage';
+import { PlaceResult, User } from '../types';
 
 interface DashboardProps {
   currentUser: User;
@@ -20,16 +20,17 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   // --- Alert System ---
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
-    // Visual and Audio Alert
-    const audio = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg'); // Using a placeholder sound
-    audio.loop = true;
-    audio.play().catch(e => console.log("Audio play failed (interaction needed)", e));
     
-    // Simulate sending location to guardians
+    // NOTE: Audio is now played on the Guardian's device, NOT here.
+    // We only show visual confirmation.
+
+    // Send Alert Signal and Location to Guardians
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((pos) => {
         const { latitude, longitude } = pos.coords;
+        
         currentUser.guardians.forEach(async (gEmail) => {
+           // 1. Send Chat Message (Record)
            await sendMessage({
              senderEmail: currentUser.email,
              receiverEmail: gEmail,
@@ -38,7 +39,21 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
              lat: latitude,
              lng: longitude
            });
+           
+           // 2. Send Alert Signal (Triggers Alarm on Guardian Phone)
+           await sendAlert(currentUser.email, gEmail, reason, latitude, longitude);
         });
+      }, (err) => {
+          // If geolocation fails, still send the alert without location
+          console.error("Geo error", err);
+           currentUser.guardians.forEach(async (gEmail) => {
+             await sendMessage({
+               senderEmail: currentUser.email,
+               receiverEmail: gEmail,
+               text: `🚨 SOS! ALERT TRIGGERED: ${reason} (Location Unavailable)`,
+             });
+             await sendAlert(currentUser.email, gEmail, reason);
+           });
       });
     }
 
@@ -104,12 +119,12 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
 
   return (
     <div className="space-y-8 pb-8">
-      {/* Alert Overlay */}
+      {/* Alert Overlay - Visual Only */}
       {alertActive && (
         <div className="fixed inset-0 z-[100] bg-red-600/95 backdrop-blur-xl flex flex-col items-center justify-center animate-pulse-fast text-white p-8 text-center">
           <div className="text-9xl mb-6 filter drop-shadow-lg">🚨</div>
-          <h1 className="text-6xl font-black mb-4 tracking-tighter uppercase drop-shadow-md">SOS Active</h1>
-          <p className="text-2xl mb-12 font-light opacity-90 max-w-md">Emergency location sent to all guardians.</p>
+          <h1 className="text-6xl font-black mb-4 tracking-tighter uppercase drop-shadow-md">SOS Sent</h1>
+          <p className="text-2xl mb-12 font-light opacity-90 max-w-md">Alert sent to guardians. Alarm will ring on their devices.</p>
           <button 
             onClick={() => { setAlertActive(false); window.location.reload(); }} 
             className="bg-white text-red-600 px-12 py-5 rounded-full font-bold text-xl shadow-2xl hover:scale-105 active:scale-95 transition-all transform border-4 border-red-100"

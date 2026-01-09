@@ -1,10 +1,11 @@
 import { child, get, off, onValue, push, ref, remove, set, update } from 'firebase/database';
-import { Message, User } from '../types';
+import { Alert, Message, User } from '../types';
 import { db } from './firebase';
 
 const CURRENT_USER_KEY = 'guardian_current_user';
 const USERS_STORAGE_KEY = 'guardian_users_backup';
 const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
+const ALERTS_STORAGE_KEY = 'guardian_alerts_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
 const sanitize = (email: string) => email.replace(/\./g, '_');
@@ -43,6 +44,22 @@ const saveLocalMessage = (chatId: string, msg: Message) => {
     all[chatId].push(msg);
     localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
 };
+
+const getLocalAlerts = (userEmail: string): Alert[] => {
+    try {
+        const all = JSON.parse(localStorage.getItem(ALERTS_STORAGE_KEY) || '{}');
+        return all[sanitize(userEmail)] || [];
+    } catch { return []; }
+};
+
+const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
+    const key = sanitize(recipientEmail);
+    const all = JSON.parse(localStorage.getItem(ALERTS_STORAGE_KEY) || '{}');
+    if (!all[key]) all[key] = [];
+    all[key].push(alert);
+    localStorage.setItem(ALERTS_STORAGE_KEY, JSON.stringify(all));
+};
+
 
 // Helper: Run promise with short timeout to prevent UI blocking on slow network
 const withTimeout = <T>(promise: Promise<T>, ms: number = 1500): Promise<T> => {
@@ -249,4 +266,62 @@ export const deleteConversation = async (user1Email: string, user2Email: string)
 
   // 2. Delete Remote
   remove(ref(db, `messages/${chatId}`)).catch(e => console.warn(e));
+};
+
+// --- Alert System ---
+
+export const sendAlert = async (senderEmail: string, receiverEmail: string, reason: string, lat?: number, lng?: number) => {
+    const alertId = generateId();
+    const alert: Alert = {
+        id: alertId,
+        senderEmail,
+        receiverEmail,
+        reason,
+        timestamp: Date.now(),
+        lat, 
+        lng,
+        acknowledged: false
+    };
+    
+    const recipientKey = sanitize(receiverEmail);
+
+    // 1. Save Local Backup (though this is for another user, so local doesn't matter as much unless shared device)
+    saveLocalAlert(receiverEmail, alert);
+
+    // 2. Send Remote
+    const alertsRef = ref(db, `alerts/${recipientKey}`);
+    const newAlertRef = push(alertsRef);
+    await set(newAlertRef, alert);
+};
+
+export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[]) => void) => {
+    const userKey = sanitize(userEmail);
+    const alertsRef = ref(db, `alerts/${userKey}`);
+    
+    let unsubscribe: any;
+    
+    try {
+        unsubscribe = onValue(alertsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const alerts = Object.values(data) as Alert[];
+                callback(alerts);
+            } else {
+                callback([]);
+            }
+        });
+    } catch (e) {
+        console.warn("Alert subscription failed", e);
+    }
+    
+    // Fallback polling for local demo
+    const interval = setInterval(() => {
+        const local = getLocalAlerts(userEmail);
+        if (local.length > 0) callback(local);
+    }, 2000);
+
+    return () => {
+        if (unsubscribe) off(alertsRef);
+        clearInterval(interval);
+    };
 };

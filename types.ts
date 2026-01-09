@@ -19,6 +19,17 @@ export interface Message {
   lng?: number;
 }
 
+export interface Alert {
+  id: string;
+  senderEmail: string;
+  receiverEmail: string;
+  reason: string;
+  timestamp: number;
+  lat?: number;
+  lng?: number;
+  acknowledged?: boolean;
+}
+
 export interface PlaceResult {
   title: string;
   uri: string;
