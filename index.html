@@ -7,6 +7,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+      // Global Error Handler to debug "Blank Screen" issues
+      window.onerror = function(msg, url, line, col, error) {
+        // Ignore ResizeObserver errors which are benign
+        if (msg && typeof msg === 'string' && msg.includes('ResizeObserver')) return;
+        
+        const root = document.getElementById('root');
+        if (root && root.innerHTML === '') {
+           const errDiv = document.createElement('div');
+           errDiv.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:#1a1a1a; color:#ff5555; padding:20px; z-index:9999; overflow:auto; font-family:monospace;';
+           errDiv.innerHTML = '<h3>Application Startup Error</h3><pre>' + msg + '\nLocation: ' + url + ':' + line + '</pre>';
+           document.body.appendChild(errDiv);
+        }
+      };
+
       // Safe Polyfill for process.env
       window.process = window.process || {};
       window.process.env = window.process.env || {};
