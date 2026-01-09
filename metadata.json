@@ -1,0 +1,8 @@
+{
+  "name": "Guardian Sentinel",
+  "description": "A personal safety application with voice-activated distress triggers, live location sharing, and guardian communication.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
