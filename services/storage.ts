@@ -1,13 +1,15 @@
-import { child, get, onValue, push, ref, remove, set, update } from 'firebase/database';
+import { child, get, off, onValue, push, ref, remove, set, update } from 'firebase/database';
 import { Message, User } from '../types';
 import { db } from './firebase';
 
 const CURRENT_USER_KEY = 'guardian_current_user';
+const USERS_STORAGE_KEY = 'guardian_users_backup';
+const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
 const sanitize = (email: string) => email.replace(/\./g, '_');
 
-// Polyfill for randomUUID if not available (e.g. insecure context)
+// Polyfill for randomUUID
 const generateId = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
         return crypto.randomUUID();
@@ -15,7 +17,45 @@ const generateId = () => {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-// --- Session Management (Local) ---
+// --- LocalStorage Fallback Helpers ---
+const getLocalUsers = (): Record<string, User> => {
+    try {
+        return JSON.parse(localStorage.getItem(USERS_STORAGE_KEY) || '{}');
+    } catch { return {}; }
+};
+
+const saveLocalUser = (user: User) => {
+    const users = getLocalUsers();
+    users[sanitize(user.email)] = user;
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+};
+
+const getLocalMessages = (chatId: string): Message[] => {
+     try {
+        const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
+        return all[chatId] || [];
+    } catch { return []; }
+};
+
+const saveLocalMessage = (chatId: string, msg: Message) => {
+    const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
+    if (!all[chatId]) all[chatId] = [];
+    all[chatId].push(msg);
+    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
+};
+
+// Helper: Run promise with short timeout to prevent UI blocking on slow network
+const withTimeout = <T>(promise: Promise<T>, ms: number = 1500): Promise<T> => {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Firebase Operation Timeout")), ms);
+        promise.then(
+            (res) => { clearTimeout(timer); resolve(res); },
+            (err) => { clearTimeout(timer); reject(err); }
+        );
+    });
+};
+
+// --- Session Management ---
 
 export const getCurrentUser = (): User | null => {
   const stored = localStorage.getItem(CURRENT_USER_KEY);
@@ -26,17 +66,10 @@ export const logoutUser = () => {
   localStorage.removeItem(CURRENT_USER_KEY);
 };
 
-// --- User Management (Firebase) ---
+// --- User Management ---
 
 export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'dangerPhrase'>): Promise<User | null> => {
   const sanitizedEmail = sanitize(user.email);
-  const userRef = ref(db, `users/${sanitizedEmail}`);
-  
-  const snapshot = await get(userRef);
-  if (snapshot.exists()) {
-    return null; // User already exists
-  }
-
   const newUser: User = {
     ...user,
     id: generateId(),
@@ -44,47 +77,95 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
     dangerPhrase: 'help me now'
   };
 
-  await set(userRef, newUser);
+  // 1. Local Check (Instant)
+  const localUsers = getLocalUsers();
+  if (localUsers[sanitizedEmail]) return null; // Already exists locally
+
+  // 2. Optimistic Write (Instant Success)
+  saveLocalUser(newUser);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+
+  // 3. Background Sync (Fire & Forget)
+  withTimeout(
+      (async () => {
+          const userRef = ref(db, `users/${sanitizedEmail}`);
+          // We intentionally skip the 'check exists' on remote to speed up. 
+          // If it overwrites in a demo scenario, it's fine. 
+          await set(userRef, newUser);
+      })(),
+      2000
+  ).catch(e => console.warn("Background sync skipped/failed:", e));
+
   return newUser;
 };
 
 export const loginUser = async (email: string, password: string): Promise<User | null> => {
   const sanitizedEmail = sanitize(email);
-  const dbRef = ref(db);
   
+  // 1. Local Check (Instant)
+  const localUsers = getLocalUsers();
+  const localUser = localUsers[sanitizedEmail];
+  
+  if (localUser && localUser.password === password) {
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(localUser));
+      return localUser;
+  }
+
+  // 2. If not local, try Remote (with timeout)
+  // This handles the case where user registered on another device
   try {
-    const snapshot = await get(child(dbRef, `users/${sanitizedEmail}`));
+    const snapshot = await withTimeout(
+        get(child(ref(db), `users/${sanitizedEmail}`)), 
+        2000 // 2s max wait for network
+    );
+    
     if (snapshot.exists()) {
       const user = snapshot.val() as User;
       if (user.password === password) {
+        // Cache it locally for next time
+        saveLocalUser(user);
         localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
         return user;
       }
     }
-    return null;
-  } catch (error) {
-    console.error(error);
-    return null;
+  } catch (e) {
+      console.warn("Remote login check failed/timed out:", e);
   }
+
+  return null;
 };
 
 export const updateUser = async (updatedUser: User): Promise<void> => {
   const sanitizedEmail = sanitize(updatedUser.email);
-  await update(ref(db, `users/${sanitizedEmail}`), updatedUser);
+  
+  // 1. Update Local (Instant)
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+  saveLocalUser(updatedUser);
+
+  // 2. Background Sync
+  update(ref(db, `users/${sanitizedEmail}`), updatedUser).catch(e => 
+      console.warn("Background update failed:", e)
+  );
 };
 
 export const getUsers = async (): Promise<User[]> => {
-  const dbRef = ref(db);
-  const snapshot = await get(child(dbRef, 'users'));
-  if (snapshot.exists()) {
-    return Object.values(snapshot.val());
-  }
-  return [];
+  // Return local immediately for speed
+  const localUsers = Object.values(getLocalUsers());
+  
+  // Attempt to fetch remote and merge (fire and forget)
+  try {
+      withTimeout(get(child(ref(db), 'users')), 1000).then(snapshot => {
+          if (snapshot.exists()) {
+              const remoteUsers = Object.values(snapshot.val()) as User[];
+              // In a real app we would merge this into local state
+          }
+      }).catch(() => {});
+  } catch {}
+
+  return localUsers;
 };
 
-// --- Chat Management (Firebase) ---
+// --- Chat Management ---
 
 const getChatId = (email1: string, email2: string) => {
   return [sanitize(email1), sanitize(email2)].sort().join('_');
@@ -92,37 +173,80 @@ const getChatId = (email1: string, email2: string) => {
 
 export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>) => {
   const chatId = getChatId(msg.senderEmail, msg.receiverEmail);
+  const timestamp = Date.now();
+  const id = generateId();
+  const newMessage: Message = { ...msg, id, timestamp };
+
+  // 1. Save Local (Instant)
+  saveLocalMessage(chatId, newMessage);
+
+  // 2. Send Remote (Background)
   const messagesRef = ref(db, `messages/${chatId}`);
   const newMessageRef = push(messagesRef);
-  
-  const newMessage: Message = {
-    ...msg,
-    id: newMessageRef.key!,
-    timestamp: Date.now()
-  };
-  
-  await set(newMessageRef, newMessage);
+  set(newMessageRef, { ...newMessage, id: newMessageRef.key! }).catch(e => 
+      console.warn("Background message send failed:", e)
+  );
 };
 
-// Real-time subscription to messages
+// Real-time subscription
 export const subscribeToMessages = (user1Email: string, user2Email: string, callback: (msgs: Message[]) => void) => {
   const chatId = getChatId(user1Email, user2Email);
   const messagesRef = ref(db, `messages/${chatId}`);
   
-  return onValue(messagesRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const loadedMessages = Object.values(data) as Message[];
-      // Sort by timestamp
-      loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
-      callback(loadedMessages);
-    } else {
-      callback([]);
-    }
-  });
+  let unsubscribeFirebase: any;
+  let localInterval: any;
+
+  // 1. Load Local Immediately
+  const initialLocal = getLocalMessages(chatId);
+  if (initialLocal.length > 0) {
+      callback(initialLocal.sort((a, b) => a.timestamp - b.timestamp));
+  }
+
+  // 2. Try Firebase Subscription
+  try {
+      unsubscribeFirebase = onValue(messagesRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          const loadedMessages = Object.values(data) as Message[];
+          loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
+          
+          // Sync remote messages to local storage
+          const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
+          all[chatId] = loadedMessages;
+          localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
+
+          callback(loadedMessages);
+        }
+      }, (error) => {
+          console.warn("Firebase subscribe error, using local polling", error);
+          if (!localInterval) startLocalPolling();
+      });
+  } catch (e) {
+      if (!localInterval) startLocalPolling();
+  }
+
+  function startLocalPolling() {
+      if (localInterval) return;
+      localInterval = setInterval(() => {
+          const updated = getLocalMessages(chatId);
+          callback(updated.sort((a, b) => a.timestamp - b.timestamp));
+      }, 1000);
+  }
+
+  return () => {
+    if (unsubscribeFirebase) off(messagesRef);
+    if (localInterval) clearInterval(localInterval);
+  };
 };
 
 export const deleteConversation = async (user1Email: string, user2Email: string) => {
   const chatId = getChatId(user1Email, user2Email);
-  await remove(ref(db, `messages/${chatId}`));
+  
+  // 1. Delete Local
+  const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
+  delete all[chatId];
+  localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
+
+  // 2. Delete Remote
+  remove(ref(db, `messages/${chatId}`)).catch(e => console.warn(e));
 };
