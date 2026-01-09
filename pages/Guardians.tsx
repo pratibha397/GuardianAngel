@@ -8,58 +8,53 @@ interface GuardiansProps {
 
 const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
   const [emailInput, setEmailInput] = useState('');
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [loading, setLoading] = useState(false);
 
   const addGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
-    const emailToAdd = emailInput.trim(); // Critical fix: Remove whitespace
-    
+    const emailToAdd = emailInput.trim();
     if (!emailToAdd) return;
     
     if (currentUser.guardians.includes(emailToAdd)) {
-        setMsg("User is already a guardian.");
+        setMsg({ type: 'error', text: "User is already a guardian." });
+        return;
+    }
+    if (emailToAdd.toLowerCase() === currentUser.email.toLowerCase()) {
+        setMsg({ type: 'error', text: "You cannot add yourself." });
         return;
     }
 
     setLoading(true);
-    setMsg('');
+    setMsg(null);
 
     try {
-        // Use the targeted lookup instead of getting all users
         const targetUser = await findUserByEmail(emailToAdd);
 
         if (!targetUser) {
-            setMsg("User not found. They must register first.");
-            setLoading(false);
-            return;
-        }
-
-        if (targetUser.email === currentUser.email) {
-            setMsg("You cannot add yourself.");
+            setMsg({ type: 'error', text: "User not found. Check email or ask them to register." });
             setLoading(false);
             return;
         }
 
         const updatedUser = {
             ...currentUser,
-            guardians: [...currentUser.guardians, emailToAdd]
+            guardians: [...currentUser.guardians, targetUser.email] // Store the formatted email from DB
         };
         
         await updateUser(updatedUser);
         setEmailInput('');
-        setMsg("Guardian added successfully.");
+        setMsg({ type: 'success', text: "Guardian added successfully." });
     } catch (error) {
         console.error(error);
-        setMsg("Failed to add guardian.");
+        setMsg({ type: 'error', text: "Failed to add guardian." });
     } finally {
         setLoading(false);
     }
   };
 
   const removeGuardian = async (email: string) => {
-      if (!window.confirm(`Remove ${email} from guardians?`)) return;
-      
+      if (!window.confirm(`Remove ${email}?`)) return;
       const updatedUser = {
           ...currentUser,
           guardians: currentUser.guardians.filter(g => g !== email)
@@ -70,84 +65,64 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-slate-900/60 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 shadow-xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-48 h-48 text-blue-500">
-                <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.352-.272-2.636-.759-3.807a.75.75 0 00-.724-.516 11.209 11.209 0 01-7.75-3.256zM8.25 10.5a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z" clipRule="evenodd" />
-            </svg>
-        </div>
-
-        <h2 className="text-3xl font-black text-white mb-2 tracking-tight">Manage Guardians</h2>
-        <p className="text-gray-400 text-sm mb-8 max-w-md leading-relaxed">
-            Guardians are your safety net. They receive instant SOS alerts, live location tracking, and audio feeds during emergencies.
+      <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-sm">
+        <h2 className="text-xl font-bold text-white mb-2">Manage Guardians</h2>
+        <p className="text-slate-400 text-sm mb-6">
+            Guardians receive immediate alerts when you trigger SOS.
         </p>
 
-        <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg">
-            <div className="relative flex-1">
-                <input 
-                    type="email" 
-                    placeholder="Enter guardian email"
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-2xl p-4 pl-12 text-white placeholder:text-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                    value={emailInput}
-                    onChange={e => setEmailInput(e.target.value)}
-                    required
-                />
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                        <path d="M3 4a2 2 0 00-2 2v1.161l8.441 4.221a1.25 1.25 0 001.118 0L19 7.162V6a2 2 0 00-2-2H3z" />
-                        <path d="M19 8.839l-7.77 3.885a2.75 2.75 0 01-2.46 0L1 8.839V14a2 2 0 002 2h14a2 2 0 002-2V8.839z" />
-                    </svg>
-                </div>
-            </div>
+        <form onSubmit={addGuardian} className="flex gap-2">
+            <input 
+                type="email" 
+                placeholder="Guardian's Email"
+                className="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:border-blue-500 outline-none transition-all"
+                value={emailInput}
+                onChange={e => setEmailInput(e.target.value)}
+                required
+            />
             <button 
                 type="submit" 
                 disabled={loading}
-                className="bg-blue-600 hover:bg-blue-500 px-8 rounded-2xl text-white font-bold disabled:opacity-50 shadow-lg shadow-blue-900/20 transition-all hover:scale-105"
+                className="bg-blue-600 hover:bg-blue-500 px-6 rounded-xl text-white font-bold disabled:opacity-50 transition-colors"
             >
                 {loading ? '...' : 'Add'}
             </button>
         </form>
         {msg && (
-            <div className={`mt-4 p-3 rounded-xl inline-block text-sm font-bold animate-fade-in ${msg.includes('success') ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                {msg}
+            <div className={`mt-4 p-3 rounded-lg text-sm font-medium ${msg.type === 'success' ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                {msg.text}
             </div>
         )}
-    </div>
+      </div>
 
-    <div className="grid gap-4">
-        <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider ml-4">Trusted Contacts ({currentUser.guardians.length})</h3>
-        {currentUser.guardians.length === 0 ? (
-            <div className="text-center py-12 bg-white/5 rounded-[2rem] border border-dashed border-white/10">
-                <span className="text-4xl block mb-2 opacity-30 grayscale">👥</span>
-                <p className="text-gray-500 text-xs uppercase tracking-wide">No guardians added yet.</p>
-            </div>
-        ) : (
-            <div className="grid gap-3">
-                {currentUser.guardians.map(g => (
-        <div key={g} className="flex justify-between items-center bg-slate-800/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group hover:bg-slate-800/60">
-                        <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold shadow-lg text-lg">
+      <div>
+          <h3 className="text-slate-500 font-bold text-xs uppercase tracking-wider mb-3 pl-1">Trusted Contacts</h3>
+          {currentUser.guardians.length === 0 ? (
+              <div className="bg-slate-800/50 rounded-xl p-8 text-center border border-dashed border-slate-700">
+                  <p className="text-slate-500 text-sm">No guardians added.</p>
+              </div>
+          ) : (
+              <div className="space-y-3">
+                  {currentUser.guardians.map(g => (
+                      <div key={g} className="flex justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700">
+                          <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 font-bold">
                                 {g[0].toUpperCase()}
                               </div>
                               <div>
-                                  <div className="text-gray-200 font-bold">{g}</div>
-                                  <div className="text-xs text-green-400 flex items-center gap-1.5 mt-0.5">
-                                    <span className="relative flex h-2 w-2">
-                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                    </span>
+                                  <div className="text-slate-200 font-medium">{g}</div>
+                                  <div className="text-xs text-green-500 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
                                     Active
                                   </div>
                               </div>
                           </div>
                           <button 
                             onClick={() => removeGuardian(g)}
-                            className="p-3 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
-                            title="Remove Guardian"
+                            className="text-slate-500 hover:text-red-400 p-2"
+                            title="Remove"
                           >
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.49 1.478 47.4 47.4 0 00-15.28 0 .75.75 0 01-.49-1.478 48.809 48.809 0 013.876-.512v-.227c0-1.005.81-1.847 1.819-1.936.85-.075 1.706-.115 2.568-.115.862 0 1.718.04 2.568.115 1.01.089 1.819.93 1.819 1.936zm-3.75 2.5a.75.75 0 00-1.5 0v7a.75.75 0 001.5 0v-7z" clipRule="evenodd" />
-                              </svg>
+                             Remove
                           </button>
                       </div>
                   ))}
