@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getUsers, updateUser } from '../services/storage';
+import { findUserByEmail, updateUser } from '../services/storage';
 import { User } from '../types';
 
 interface GuardiansProps {
@@ -22,8 +22,8 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
     setMsg('');
 
     try {
-        const allUsers = await getUsers();
-        const targetUser = allUsers.find(u => u.email === emailInput);
+        // Use the targeted lookup instead of getting all users
+        const targetUser = await findUserByEmail(emailInput);
 
         if (!targetUser) {
             setMsg("User not found. They must register first.");
