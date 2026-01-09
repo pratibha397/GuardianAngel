@@ -106,8 +106,6 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
   withTimeout(
       (async () => {
           const userRef = ref(db, `users/${sanitizedEmail}`);
-          // We intentionally skip the 'check exists' on remote to speed up. 
-          // If it overwrites in a demo scenario, it's fine. 
           await set(userRef, newUser);
       })(),
       2000
@@ -129,17 +127,15 @@ export const loginUser = async (email: string, password: string): Promise<User |
   }
 
   // 2. If not local, try Remote (with timeout)
-  // This handles the case where user registered on another device
   try {
     const snapshot = await withTimeout(
         get(child(ref(db), `users/${sanitizedEmail}`)), 
-        2000 // 2s max wait for network
+        2000 
     );
     
     if (snapshot.exists()) {
       const user = snapshot.val() as User;
       if (user.password === password) {
-        // Cache it locally for next time
         saveLocalUser(user);
         localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
         return user;
@@ -165,16 +161,45 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   );
 };
 
+// New Function: Specifically find a user by email, even if not in local cache
+export const findUserByEmail = async (email: string): Promise<User | null> => {
+    const sanitizedEmail = sanitize(email);
+    
+    // 1. Local Check
+    const localUsers = getLocalUsers();
+    if (localUsers[sanitizedEmail]) {
+        return localUsers[sanitizedEmail];
+    }
+
+    // 2. Remote Check (Wait for it)
+    try {
+        const snapshot = await withTimeout(
+             get(child(ref(db), `users/${sanitizedEmail}`)),
+             3000 // Give it 3s to find the user
+        );
+
+        if (snapshot.exists()) {
+            const user = snapshot.val() as User;
+            saveLocalUser(user); // Cache for future
+            return user;
+        }
+    } catch (e) {
+        console.warn("User lookup failed:", e);
+    }
+    return null;
+};
+
 export const getUsers = async (): Promise<User[]> => {
   // Return local immediately for speed
   const localUsers = Object.values(getLocalUsers());
   
-  // Attempt to fetch remote and merge (fire and forget)
+  // Attempt to fetch remote and merge (fire and forget) to keep lists fresh
   try {
-      withTimeout(get(child(ref(db), 'users')), 1000).then(snapshot => {
+      withTimeout(get(child(ref(db), 'users')), 1500).then(snapshot => {
           if (snapshot.exists()) {
-              const remoteUsers = Object.values(snapshot.val()) as User[];
-              // In a real app we would merge this into local state
+              const remoteUsers = snapshot.val();
+              // Update local cache with any new users found
+              Object.values(remoteUsers).forEach((u: any) => saveLocalUser(u));
           }
       }).catch(() => {});
   } catch {}
