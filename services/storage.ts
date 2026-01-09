@@ -8,8 +8,8 @@ const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
 const ALERTS_STORAGE_KEY = 'guardian_alerts_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
-// CRITICAL FIX: Always lowercase to ensure case-insensitive matching
-const sanitize = (email: string) => email.toLowerCase().replace(/\./g, '_');
+// CRITICAL FIX: Always trim and lowercase to ensure consistent matching
+const sanitize = (email: string) => email.trim().toLowerCase().replace(/\./g, '_');
 
 // Polyfill for randomUUID
 const generateId = () => {
@@ -28,7 +28,7 @@ const getLocalUsers = (): Record<string, User> => {
 
 const saveLocalUser = (user: User) => {
     const users = getLocalUsers();
-    // Use sanitized (lowercased) email as key, but preserve original email in object
+    // Use sanitized email as key
     users[sanitize(user.email)] = user;
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 };
@@ -64,7 +64,7 @@ const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
 
 
 // Helper: Run promise with short timeout to prevent UI blocking on slow network
-const withTimeout = <T>(promise: Promise<T>, ms: number = 1500): Promise<T> => {
+const withTimeout = <T>(promise: Promise<T>, ms: number = 2500): Promise<T> => {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Firebase Operation Timeout")), ms);
         promise.then(
