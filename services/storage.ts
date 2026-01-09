@@ -8,7 +8,8 @@ const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
 const ALERTS_STORAGE_KEY = 'guardian_alerts_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
-const sanitize = (email: string) => email.replace(/\./g, '_');
+// CRITICAL FIX: Always lowercase to ensure case-insensitive matching
+const sanitize = (email: string) => email.toLowerCase().replace(/\./g, '_');
 
 // Polyfill for randomUUID
 const generateId = () => {
@@ -27,6 +28,7 @@ const getLocalUsers = (): Record<string, User> => {
 
 const saveLocalUser = (user: User) => {
     const users = getLocalUsers();
+    // Use sanitized (lowercased) email as key, but preserve original email in object
     users[sanitize(user.email)] = user;
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 };
