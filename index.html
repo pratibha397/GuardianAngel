@@ -7,11 +7,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Polyfill process.env for browser environment to prevent crash
+      // Polyfill process.env for browser environment
       window.process = {
         env: {
-          // You can manually inject keys here for testing if needed, or rely on build tools
-          NODE_ENV: 'development' 
+          NODE_ENV: 'development'
         }
       };
 
@@ -69,12 +68,12 @@
 </script>
 <style>
   body { font-family: 'Inter', sans-serif; }
-  /* Hide scrollbar for clean UI in chat */
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 </style>
 </head>
   <body class="bg-dark text-white antialiased selection:bg-blue-500 selection:text-white">
     <div id="root"></div>
+    <script type="module" src="index.tsx"></script>
   </body>
 </html>
