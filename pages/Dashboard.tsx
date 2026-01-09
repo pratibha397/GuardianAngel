@@ -14,6 +14,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
   
   const stopListeningRef = useRef<(() => void) | null>(null);
 
@@ -21,9 +22,6 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
-    // NOTE: Audio is now played on the Guardian's device, NOT here.
-    // We only show visual confirmation.
-
     // Send Alert Signal and Location to Guardians
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((pos) => {
@@ -102,7 +100,25 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
     return () => clearInterval(interval);
   }, [safeTimer]);
 
-  // --- Nearby Places ---
+  // --- Live Location Tracking (Self) ---
+  useEffect(() => {
+    if (navigator.geolocation) {
+        // Watch position for real-time updates on dashboard
+        const watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                setCurrentLocation({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude
+                });
+            },
+            (err) => console.error("Location watch error:", err),
+            { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+        );
+        return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, []);
+
+  // --- Nearby Places (One-time fetch) ---
   useEffect(() => {
     if (navigator.geolocation) {
       setLoadingPlaces(true);
@@ -118,7 +134,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   }, []);
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="space-y-6 pb-8">
       {/* Alert Overlay - Visual Only */}
       {alertActive && (
         <div className="fixed inset-0 z-[100] bg-red-600/95 backdrop-blur-xl flex flex-col items-center justify-center animate-pulse-fast text-white p-8 text-center">
@@ -186,6 +202,46 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
               {isListening ? 'DEACTIVATE SHIELD' : 'ACTIVATE SHIELD'}
             </button>
         </div>
+      </div>
+      
+      {/* Live Location Card */}
+      <div className="bg-slate-800/40 backdrop-blur-md p-5 rounded-2xl border border-white/5 flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                      <path fillRule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                  </svg>
+              </div>
+              <div>
+                  <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-0.5">My Current Location</h3>
+                  {currentLocation ? (
+                      <p className="text-white font-mono text-sm tracking-wide">
+                          {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+                      </p>
+                  ) : (
+                      <div className="flex items-center gap-2">
+                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce"></div>
+                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce delay-100"></div>
+                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce delay-200"></div>
+                          <span className="text-gray-500 text-xs">Locating...</span>
+                      </div>
+                  )}
+              </div>
+          </div>
+          {currentLocation && (
+              <a 
+                  href={`https://www.google.com/maps/search/?api=1&query=${currentLocation.lat},${currentLocation.lng}`}
+                  target="_blank"
+                  rel="noreferrer" 
+                  className="bg-white/5 hover:bg-white/10 text-white p-2.5 rounded-xl transition-all border border-white/5 hover:border-blue-500/50 group"
+                  title="View on Maps"
+              >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 group-hover:text-blue-400 transition-colors">
+                      <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                      <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                  </svg>
+              </a>
+          )}
       </div>
 
       {/* Quick Actions Grid */}
