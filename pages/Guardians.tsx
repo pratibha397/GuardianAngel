@@ -112,20 +112,20 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
                 {msg}
             </div>
         )}
-      </div>
+    </div>
 
-      <div className="grid gap-4">
-          <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider ml-4">Trusted Contacts ({currentUser.guardians.length})</h3>
-          {currentUser.guardians.length === 0 ? (
-              <div className="text-center py-12 bg-white/5 rounded-[2rem] border border-dashed border-white/10">
-                  <span className="text-4xl block mb-2 opacity-30 grayscale">👥</span>
-                  <p className="text-gray-500 text-xs uppercase tracking-wide">No guardians added yet.</p>
-              </div>
-          ) : (
-              <div className="grid gap-3">
-                  {currentUser.guardians.map(g => (
-                      <div key={g} className="flex justify-between items-center bg-slate-800/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group hover:bg-slate-800/60">
-                          <div className="flex items-center gap-4">
+    <div className="grid gap-4">
+        <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider ml-4">Trusted Contacts ({currentUser.guardians.length})</h3>
+        {currentUser.guardians.length === 0 ? (
+            <div className="text-center py-12 bg-white/5 rounded-[2rem] border border-dashed border-white/10">
+                <span className="text-4xl block mb-2 opacity-30 grayscale">👥</span>
+                <p className="text-gray-500 text-xs uppercase tracking-wide">No guardians added yet.</p>
+            </div>
+        ) : (
+            <div className="grid gap-3">
+                {currentUser.guardians.map(g => (
+        <div key={g} className="flex justify-between items-center bg-slate-800/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group hover:bg-slate-800/60">
+                        <div className="flex items-center gap-4">
                               <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold shadow-lg text-lg">
                                 {g[0].toUpperCase()}
                               </div>

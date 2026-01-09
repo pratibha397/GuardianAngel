@@ -8,7 +8,6 @@ const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
 const ALERTS_STORAGE_KEY = 'guardian_alerts_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
-// CRITICAL FIX: Always trim and lowercase to ensure consistent matching
 const sanitize = (email: string) => email.trim().toLowerCase().replace(/\./g, '_');
 
 // Polyfill for randomUUID
@@ -28,7 +27,6 @@ const getLocalUsers = (): Record<string, User> => {
 
 const saveLocalUser = (user: User) => {
     const users = getLocalUsers();
-    // Use sanitized email as key
     users[sanitize(user.email)] = user;
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 };
@@ -165,29 +163,46 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
 
 // New Function: Specifically find a user by email, even if not in local cache
 export const findUserByEmail = async (email: string): Promise<User | null> => {
+    const searchEmail = email.trim().toLowerCase();
     const sanitizedEmail = sanitize(email);
     
-    // 1. Local Check
+    // 1. Robust Local Check (Iterate all values to catch sanitization mismatches)
     const localUsers = getLocalUsers();
-    if (localUsers[sanitizedEmail]) {
-        return localUsers[sanitizedEmail];
-    }
+    const localMatch = Object.values(localUsers).find(u => u.email.toLowerCase() === searchEmail);
+    if (localMatch) return localMatch;
 
-    // 2. Remote Check (Wait for it)
+    // 2. Remote Check (Specific Key)
     try {
         const snapshot = await withTimeout(
              get(child(ref(db), `users/${sanitizedEmail}`)),
-             3000 // Give it 3s to find the user
+             3000
         );
 
         if (snapshot.exists()) {
             const user = snapshot.val() as User;
-            saveLocalUser(user); // Cache for future
+            saveLocalUser(user);
             return user;
         }
     } catch (e) {
-        console.warn("User lookup failed:", e);
+        console.warn("Direct remote lookup failed, trying fallback scan:", e);
     }
+    
+    // 3. Remote Check (Scan All - Fallback for demo environments)
+    // This is inefficient for prod but essential for ensuring the demo works
+    try {
+        const snapshot = await withTimeout(get(child(ref(db), 'users')), 3000);
+        if (snapshot.exists()) {
+            const allUsers = snapshot.val();
+            const match = Object.values(allUsers).find((u: any) => u.email.toLowerCase() === searchEmail) as User | undefined;
+            if (match) {
+                saveLocalUser(match);
+                return match;
+            }
+        }
+    } catch (e) {
+        console.warn("Remote scan failed:", e);
+    }
+
     return null;
 };
 

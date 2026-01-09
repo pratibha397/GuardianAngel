@@ -79,7 +79,7 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
 
   if (!selectedGuardian) {
       return (
-        <div className="h-full flex flex-col">
+<div className="h-full flex flex-col">
             <h2 className="text-2xl font-bold text-white mb-6 px-2">Messages</h2>
             <div className="flex-1 overflow-y-auto space-y-3 pb-20 no-scrollbar">
                 {loadingContacts && (
@@ -93,9 +93,8 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
                         <p className="text-gray-400 text-sm">No conversations yet.</p>
                     </div>
                 )}
-                {contacts.map(c => (
-                    <button 
-                        key={c}
+                {contacts.map(c => (<button 
+                key={c}
                         onClick={() => setSelectedGuardian(c)}
                         className="w-full text-left p-4 bg-card/60 hover:bg-card/80 backdrop-blur-md rounded-2xl border border-white/5 flex items-center gap-4 transition-all hover:scale-[1.02] active:scale-[0.98]"
                     >

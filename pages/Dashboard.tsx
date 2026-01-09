@@ -15,6 +15,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
   const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [locationError, setLocationError] = useState<string>('');
   
   const stopListeningRef = useRef<(() => void) | null>(null);
 
@@ -102,36 +103,70 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
 
   // --- Live Location Tracking (Self) ---
   useEffect(() => {
-    if (navigator.geolocation) {
-        // Watch position for real-time updates on dashboard
-        const watchId = navigator.geolocation.watchPosition(
-            (pos) => {
-                setCurrentLocation({
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude
-                });
-            },
-            (err) => console.error("Location watch error:", err),
-            { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
-        );
-        return () => navigator.geolocation.clearWatch(watchId);
+    if (!navigator.geolocation) {
+        setLocationError("Geolocation not supported by this browser.");
+        return;
     }
+
+    // Attempt an immediate fetch to ensure we get something fast
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            setCurrentLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            setLocationError('');
+        },
+        (err) => {
+            console.warn("Initial location fetch failed", err);
+            // Don't set error yet, let watchPosition try
+        },
+        { enableHighAccuracy: false, timeout: 5000 }
+    );
+
+    // Watch position for real-time updates
+    const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+            setCurrentLocation({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude
+            });
+            setLocationError('');
+        },
+        (err) => {
+            console.error("Location watch error:", err);
+            if (err.code === 1) setLocationError("Permission denied. Enable location.");
+            else if (err.code === 2) setLocationError("Position unavailable.");
+            else if (err.code === 3) setLocationError("Location timed out.");
+        },
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   // --- Nearby Places (One-time fetch) ---
   useEffect(() => {
-    if (navigator.geolocation) {
-      setLoadingPlaces(true);
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
-        setNearbyPlaces(places);
-        setLoadingPlaces(false);
-      }, (err) => {
-        console.error(err);
-        setLoadingPlaces(false);
-      });
+    if (currentLocation) {
+        // Only fetch once when we have a location
+        if (nearbyPlaces.length > 0) return; 
+
+        setLoadingPlaces(true);
+        getNearbyStations(currentLocation.lat, currentLocation.lng)
+            .then(places => {
+                setNearbyPlaces(places);
+                setLoadingPlaces(false);
+            })
+            .catch(e => {
+                console.error(e);
+                setLoadingPlaces(false);
+            });
+    } else if (!loadingPlaces && !locationError && navigator.geolocation) {
+        // Fallback: Try to get location just for stations if the main watcher is slow
+        setLoadingPlaces(true);
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
+            setNearbyPlaces(places);
+            setLoadingPlaces(false);
+        }, () => setLoadingPlaces(false));
     }
-  }, []);
+  }, [currentLocation]);
 
   return (
     <div className="space-y-6 pb-8">
@@ -217,6 +252,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                       <p className="text-white font-mono text-base font-medium tracking-wide">
                           {currentLocation.lat.toFixed(4)}, {currentLocation.lng.toFixed(4)}
                       </p>
+                  ) : locationError ? (
+                      <p className="text-red-400 text-xs font-bold animate-pulse">{locationError}</p>
                   ) : (
                       <div className="flex items-center gap-2">
                           <span className="text-gray-500 text-xs animate-pulse">Triangulating...</span>
@@ -343,7 +380,17 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         ) : (
             <div className="text-center py-8 bg-white/5 rounded-2xl border border-dashed border-white/10">
                 <span className="text-4xl block mb-2 opacity-30 grayscale">🗺️</span>
-                <p className="text-gray-500 text-xs uppercase tracking-wide">No nearby stations found.</p>
+                <p className="text-gray-500 text-xs uppercase tracking-wide">
+                    {locationError ? "Please enable location to see stations." : "No nearby stations found."}
+                </p>
+                {locationError && (
+                    <button 
+                        onClick={() => window.location.reload()}
+                        className="mt-4 text-xs text-blue-400 hover:text-blue-300 underline"
+                    >
+                        Retry Permission
+                    </button>
+                )}
             </div>
         )}
       </div>
