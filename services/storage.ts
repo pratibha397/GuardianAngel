@@ -1,11 +1,19 @@
-import { User, Message } from '../types';
+import { child, get, onValue, push, ref, remove, set, update } from 'firebase/database';
+import { Message, User } from '../types';
 import { db } from './firebase';
-import { ref, set, get, child, push, onValue, remove, update } from 'firebase/database';
 
 const CURRENT_USER_KEY = 'guardian_current_user';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
 const sanitize = (email: string) => email.replace(/\./g, '_');
+
+// Polyfill for randomUUID if not available (e.g. insecure context)
+const generateId = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
 
 // --- Session Management (Local) ---
 
@@ -31,7 +39,7 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
 
   const newUser: User = {
     ...user,
-    id: crypto.randomUUID(),
+    id: generateId(),
     guardians: [],
     dangerPhrase: 'help me now'
   };
