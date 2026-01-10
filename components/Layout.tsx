@@ -76,7 +76,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentUser, currentRoute, on
       <nav className="fixed bottom-6 left-4 right-4 bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl flex justify-around p-2 shadow-2xl z-40 max-w-lg mx-auto">
         <NavItem route={AppRoute.DASHBOARD} label="Home" icon="🏠" />
         <NavItem route={AppRoute.GUARDIANS} label="Guardians" icon="👥" />
-        <NavItem route={AppRoute.CHAT} label="Comms" icon="💬" />
+        <NavItem route={AppRoute.CHAT} label="Chat" icon="💬" />
         <NavItem route={AppRoute.SETTINGS} label="Settings" icon="⚙️" />
       </nav>
     </div>
