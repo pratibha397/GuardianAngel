@@ -106,8 +106,6 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
   withTimeout(
       (async () => {
           const userRef = ref(db, `users/${sanitizedEmail}`);
-          // We intentionally skip the 'check exists' on remote to speed up. 
-          // If it overwrites in a demo scenario, it's fine. 
           await set(userRef, newUser);
       })(),
       2000
@@ -129,17 +127,15 @@ export const loginUser = async (email: string, password: string): Promise<User |
   }
 
   // 2. If not local, try Remote (with timeout)
-  // This handles the case where user registered on another device
   try {
     const snapshot = await withTimeout(
         get(child(ref(db), `users/${sanitizedEmail}`)), 
-        2000 // 2s max wait for network
+        3000 // Increased timeout slightly for better reliability
     );
     
     if (snapshot.exists()) {
       const user = snapshot.val() as User;
       if (user.password === password) {
-        // Cache it locally for next time
         saveLocalUser(user);
         localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
         return user;
@@ -163,6 +159,20 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   update(ref(db, `users/${sanitizedEmail}`), updatedUser).catch(e => 
       console.warn("Background update failed:", e)
   );
+};
+
+// NEW: Direct Database Lookup for Guardian Adding
+export const findUserByEmail = async (email: string): Promise<User | null> => {
+    const sanitizedEmail = sanitize(email);
+    try {
+        const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
+        if (snapshot.exists()) {
+            return snapshot.val() as User;
+        }
+    } catch (e) {
+        console.error("Error finding user in database:", e);
+    }
+    return null;
 };
 
 export const getUsers = async (): Promise<User[]> => {
@@ -213,13 +223,11 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
   let unsubscribeFirebase: any;
   let localInterval: any;
 
-  // 1. Load Local Immediately
   const initialLocal = getLocalMessages(chatId);
   if (initialLocal.length > 0) {
       callback(initialLocal.sort((a, b) => a.timestamp - b.timestamp));
   }
 
-  // 2. Try Firebase Subscription
   try {
       unsubscribeFirebase = onValue(messagesRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -227,7 +235,6 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
           const loadedMessages = Object.values(data) as Message[];
           loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
           
-          // Sync remote messages to local storage
           const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
           all[chatId] = loadedMessages;
           localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
@@ -285,10 +292,8 @@ export const sendAlert = async (senderEmail: string, receiverEmail: string, reas
     
     const recipientKey = sanitize(receiverEmail);
 
-    // 1. Save Local Backup (though this is for another user, so local doesn't matter as much unless shared device)
     saveLocalAlert(receiverEmail, alert);
 
-    // 2. Send Remote
     const alertsRef = ref(db, `alerts/${recipientKey}`);
     const newAlertRef = push(alertsRef);
     await set(newAlertRef, alert);
@@ -314,7 +319,6 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
         console.warn("Alert subscription failed", e);
     }
     
-    // Fallback polling for local demo
     const interval = setInterval(() => {
         const local = getLocalAlerts(userEmail);
         if (local.length > 0) callback(local);
