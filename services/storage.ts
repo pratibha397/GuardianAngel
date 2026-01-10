@@ -329,3 +329,10 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
         clearInterval(interval);
     };
 };
+
+// --- Realtime Location Update ---
+export const updateLiveLocation = async (email: string, lat: number, lng: number) => {
+    const sanitizedEmail = sanitize(email);
+    const locationRef = ref(db, `users/${sanitizedEmail}/location`);
+    await set(locationRef, { lat, lng, timestamp: Date.now() });
+};
