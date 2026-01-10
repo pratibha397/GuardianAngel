@@ -14,62 +14,54 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [triggerReason, setTriggerReason] = useState('');
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
+  
+  // Timer States
+  const [showTimerModal, setShowTimerModal] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
+  const [initialTimer, setInitialTimer] = useState<number>(0);
+  
   const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
   const [locationStatus, setLocationStatus] = useState<string>('Initializing...');
   
   const stopListeningRef = useRef<(() => void) | null>(null);
 
-  // --- Helper: Robust Geolocation ---
+  // --- Geolocation ---
   const getRobustLocation = (): Promise<GeolocationPosition> => {
       return new Promise((resolve, reject) => {
           if (!navigator.geolocation) {
               reject(new Error("Not supported"));
               return;
           }
-
           const success = (pos: GeolocationPosition) => {
-              // Cache successful location
               sessionStorage.setItem('last_known_lat', pos.coords.latitude.toString());
               sessionStorage.setItem('last_known_lng', pos.coords.longitude.toString());
               resolve(pos);
           };
-
           const error = (err: GeolocationPositionError) => {
-              // If high accuracy fails, try cache or fail
               const lat = sessionStorage.getItem('last_known_lat');
               const lng = sessionStorage.getItem('last_known_lng');
               if (lat && lng) {
-                  // Fake a position object from cache
                   resolve({
-                      coords: { latitude: parseFloat(lat), longitude: parseFloat(lng), accuracy: 100, altitude: null, altitudeAccuracy: null, heading: null, speed: null },
-                      timestamp: Date.now()
-                  } as GeolocationPosition);
+                      coords: { latitude: parseFloat(lat), longitude: parseFloat(lng), accuracy: 100 }
+                  } as any);
                   return;
               }
               reject(err);
           };
           
-          // 1. Try High Accuracy (GPS) with short timeout
           navigator.geolocation.getCurrentPosition(success, (e) => {
-              console.warn("GPS failed/timeout, trying low accuracy...", e.message);
-              // 2. Fallback to Low Accuracy (Wifi/Cell) immediately
               navigator.geolocation.getCurrentPosition(success, error, {
                   enableHighAccuracy: false,
                   timeout: 10000, 
-                  maximumAge: 300000 // Accept 5 min old data
+                  maximumAge: 300000
               });
-          }, {
-              enableHighAccuracy: true,
-              timeout: 3000 // 3s timeout for GPS
-          });
+          }, { enableHighAccuracy: true, timeout: 3000 });
       });
   };
 
   // --- Alert System ---
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
-    
     let displayReason = reason;
     if (reason.includes("PHRASE_DETECTED")) displayReason = `Danger Phrase "${currentUser.dangerPhrase}" Detected`;
     else if (reason.includes("DISTRESS_DETECTED")) displayReason = "Distress Signals Detected";
@@ -82,14 +74,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         lat = pos.coords.latitude;
         lng = pos.coords.longitude;
     } catch (e) {
-        console.error("Location failed during alert", e);
+        console.error("Location failed", e);
     }
     
     currentUser.guardians.forEach(async (gEmail) => {
         await sendMessage({
             senderEmail: currentUser.email,
             receiverEmail: gEmail,
-            text: `🚨 SOS! ALERT TRIGGERED: ${displayReason} ${!lat ? '(Location Unavailable)' : ''}`,
+            text: `🚨 SOS! ALERT: ${displayReason} ${!lat ? '(No Loc)' : ''}`,
             isLocation: !!lat,
             lat,
             lng
@@ -115,11 +107,18 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         );
         stopListeningRef.current = monitor.stop;
       } catch (e) {
-        console.error("Failed to start monitoring", e);
         setIsListening(false);
-        alert("Microphone access denied. Please check site permissions.");
+        alert("Microphone access needed.");
       }
     }
+  };
+
+  // --- Timer Logic ---
+  const startTimer = (minutes: number) => {
+      const seconds = minutes * 60;
+      setInitialTimer(seconds);
+      setSafeTimer(seconds);
+      setShowTimerModal(false);
   };
 
   useEffect(() => {
@@ -133,14 +132,15 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
     return () => clearInterval(interval);
   }, [safeTimer]);
 
+  // --- Init ---
   useEffect(() => {
     const init = async () => {
-        setLocationStatus('Acquiring Satellites...');
+        setLocationStatus('Scanning...');
         try {
             const pos = await getRobustLocation();
             const { latitude, longitude } = pos.coords;
             setCurrentLocation({ lat: latitude, lng: longitude });
-            setLocationStatus('Active');
+            setLocationStatus('Locked');
             
             setLoadingPlaces(true);
             try {
@@ -150,183 +150,211 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
             setLoadingPlaces(false);
 
         } catch (e: any) {
-            console.error("Dashboard location error", e);
-            if (e.code === 1) setLocationStatus("Permission Denied");
-            else if (e.code === 2) setLocationStatus("Unavailable");
-            else setLocationStatus("Signal Lost");
+            setLocationStatus("Offline");
             setLoadingPlaces(false);
         }
     };
     init();
   }, []);
 
+  const formatTime = (seconds: number) => {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
   return (
-    <div className="space-y-6 pb-8">
-      {/* Alert Overlay */}
+    <div className="space-y-6 pb-8 relative">
+      {/* Background Overlay for Scanlines */}
+      <div className="fixed inset-0 scanlines opacity-20 pointer-events-none"></div>
+
+      {/* SOS Overlay */}
       {alertActive && (
-        <div className="fixed inset-0 z-[100] bg-red-950/90 flex flex-col items-center justify-center animate-pulse text-white p-8 text-center backdrop-blur-xl">
-          <div className="text-9xl mb-6 text-red-500">🚨</div>
+        <div className="fixed inset-0 z-[100] bg-red-950/95 flex flex-col items-center justify-center animate-pulse text-white p-8 text-center backdrop-blur-xl">
+          <div className="text-9xl mb-6 text-red-500 animate-bounce">🚨</div>
           <h1 className="text-6xl font-black mb-4 uppercase tracking-tighter">SOS ACTIVE</h1>
           <div className="bg-black/40 px-8 py-4 rounded-lg border border-red-500/30 mb-12">
-             <p className="text-xl font-mono text-red-200 uppercase">{triggerReason}</p>
+             <p className="text-xl font-mono text-red-200 uppercase tracking-widest">{triggerReason}</p>
           </div>
           <button 
             onClick={() => { setAlertActive(false); window.location.reload(); }} 
-            className="bg-red-600 hover:bg-red-500 text-white px-12 py-5 rounded-lg font-bold text-2xl shadow-2xl tracking-widest border border-red-400"
+            className="bg-red-600 hover:bg-red-500 text-white px-12 py-5 rounded-lg font-bold text-2xl shadow-[0_0_30px_rgba(220,38,38,0.5)] tracking-widest border border-red-400"
           >
-            DEACTIVATE
+            CANCEL SOS
           </button>
         </div>
       )}
 
-      {/* Hero Status Card */}
-      <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-6 shadow-xl relative overflow-hidden">
-         <div className="absolute top-0 right-0 p-4 opacity-10">
-             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-32 h-32 text-white">
-                <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.352-.272-2.636-.759-3.807a.75.75 0 00-.724-.516 11.209 11.209 0 01-7.75-3.256zM8.25 10.5a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z" clipRule="evenodd" />
-             </svg>
-         </div>
+      {/* Timer Modal */}
+      {showTimerModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-yellow-500"></div>
+                  <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                      <span className="text-amber-500">⏱️</span> Set Safe Timer
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 mb-6">
+                      {[1, 5, 15, 30].map(m => (
+                          <button 
+                            key={m}
+                            onClick={() => startTimer(m)}
+                            className="bg-zinc-800 hover:bg-amber-900/30 hover:border-amber-500 border border-zinc-700 p-4 rounded-xl text-center transition-all active:scale-95"
+                          >
+                              <span className="text-2xl font-mono font-bold text-white block">{m}</span>
+                              <span className="text-xs text-zinc-400 uppercase tracking-wider">Minutes</span>
+                          </button>
+                      ))}
+                  </div>
+                  <button 
+                    onClick={() => setShowTimerModal(false)}
+                    className="w-full py-3 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl font-medium"
+                  >
+                      Cancel
+                  </button>
+              </div>
+          </div>
+      )}
 
+      {/* Status Card (Radar) */}
+      <div className="bg-zinc-900/80 backdrop-blur-md rounded-2xl border border-zinc-700/50 p-6 shadow-xl relative overflow-hidden group">
+         {isListening && (
+             <div className="absolute -right-20 -top-20 w-64 h-64 bg-green-500/5 rounded-full blur-3xl animate-pulse"></div>
+         )}
+         
          <div className="flex justify-between items-start relative z-10">
             <div>
-                <h2 className="text-zinc-400 text-xs font-bold uppercase tracking-[0.2em] mb-1">System Status</h2>
-                <div className="flex items-center gap-2">
-                    <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-green-500 animate-pulse' : 'bg-zinc-600'}`}></div>
-                    <span className={`text-2xl font-bold ${isListening ? 'text-white' : 'text-zinc-500'}`}>
-                        {isListening ? 'MONITORING ACTIVE' : 'STANDBY MODE'}
+                <h2 className="text-zinc-400 text-[10px] font-bold uppercase tracking-[0.2em] mb-2">Surveillance Mode</h2>
+                <div className="flex items-center gap-3">
+                    <div className="relative w-4 h-4">
+                        <div className={`absolute inset-0 rounded-full ${isListening ? 'bg-green-500 animate-ping' : 'bg-zinc-600'}`}></div>
+                        <div className={`relative w-4 h-4 rounded-full ${isListening ? 'bg-green-500' : 'bg-zinc-600'}`}></div>
+                    </div>
+                    <span className={`text-xl font-bold tracking-tight ${isListening ? 'text-white' : 'text-zinc-500'}`}>
+                        {isListening ? 'ACTIVE SHIELD' : 'STANDBY'}
                     </span>
                 </div>
             </div>
             {currentLocation && (
                 <div className="text-right">
-                    <h2 className="text-zinc-400 text-xs font-bold uppercase tracking-[0.2em] mb-1">GPS Signal</h2>
-                    <p className="font-mono text-blue-400 font-bold">{locationStatus}</p>
+                    <h2 className="text-zinc-400 text-[10px] font-bold uppercase tracking-[0.2em] mb-1">GPS Lock</h2>
+                    <p className="font-mono text-blue-400 text-xs">{currentLocation.lat.toFixed(4)}, {currentLocation.lng.toFixed(4)}</p>
                 </div>
             )}
          </div>
 
-         <div className="mt-8 flex gap-4 relative z-10">
-             <button 
-                onClick={toggleListening}
-                className={`flex-1 py-4 rounded-lg font-bold uppercase tracking-wider transition-all border ${
-                    isListening 
-                    ? 'bg-green-900/20 border-green-500/50 text-green-400 hover:bg-green-900/40' 
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white'
-                }`}
-             >
-                {isListening ? 'Deactivate Shield' : 'Activate Shield'}
-             </button>
+         {/* Radar Visual */}
+         <div className="mt-8 mb-4 relative h-32 flex items-center justify-center border-t border-b border-zinc-800 bg-black/20">
+             {isListening ? (
+                 <div className="relative w-24 h-24 rounded-full border border-green-900/50 flex items-center justify-center overflow-hidden">
+                     <div className="absolute w-full h-full radar-sweep animate-radar"></div>
+                     <div className="w-16 h-16 rounded-full border border-green-500/30 z-10"></div>
+                     <div className="w-1 h-1 bg-green-500 rounded-full z-10 shadow-[0_0_10px_#0f0]"></div>
+                 </div>
+             ) : (
+                 <div className="text-zinc-600 text-xs font-mono uppercase tracking-widest">System Offline</div>
+             )}
          </div>
+
+         <button 
+            onClick={toggleListening}
+            className={`w-full py-4 rounded-xl font-bold uppercase tracking-wider transition-all border shadow-lg ${
+                isListening 
+                ? 'bg-green-950/30 border-green-500/50 text-green-400 hover:bg-green-900/40 shadow-green-900/20' 
+                : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+            }`}
+         >
+            {isListening ? 'Deactivate' : 'Initialize Monitor'}
+         </button>
+         
          {transcript && isListening && (
-             <div className="mt-4 p-3 bg-black/40 rounded border border-zinc-800 font-mono text-xs text-green-500/70 truncate">
+             <div className="mt-4 p-3 bg-black/40 rounded border border-green-900/30 font-mono text-[10px] text-green-500/70 truncate">
                  &gt; {transcript}
              </div>
          )}
       </div>
 
-      {/* Emergency Actions */}
+      {/* Action Grid */}
       <div className="grid grid-cols-2 gap-4">
         <button 
             onClick={() => triggerAlert("MANUAL SOS")}
-            className="group bg-gradient-to-br from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white p-6 rounded-lg shadow-lg border border-red-500/50 flex flex-col items-center justify-center transition-all active:scale-[0.98]"
+            className="relative overflow-hidden bg-gradient-to-br from-red-600 to-red-900 hover:from-red-500 hover:to-red-800 text-white p-6 rounded-2xl shadow-xl shadow-red-900/20 border border-red-500/30 group active:scale-[0.98] transition-all"
         >
-          <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-3 group-hover:bg-white/20 transition-colors">
-            <span className="text-3xl">🆘</span>
+          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+          <div className="relative z-10 flex flex-col items-center">
+            <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🆘</span>
+            <span className="font-black text-sm tracking-[0.2em]">PANIC</span>
           </div>
-          <span className="font-black text-lg tracking-widest">PANIC</span>
         </button>
 
         <button 
-            onClick={() => setSafeTimer(30)}
+            onClick={() => setSafeTimer(safeTimer ? null : 0) /* Toggle Logic */}
             disabled={safeTimer !== null}
-            className={`group p-6 rounded-lg border flex flex-col items-center justify-center transition-all ${
+            onClickCapture={(e) => { e.stopPropagation(); if(safeTimer === null) setShowTimerModal(true); }}
+            className={`relative p-6 rounded-2xl border transition-all overflow-hidden ${
                 safeTimer !== null 
-                ? 'bg-amber-900/20 border-amber-500/50 cursor-default' 
-                : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-750 hover:border-zinc-600'
+                ? 'bg-amber-950/30 border-amber-500/50' 
+                : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-750'
             }`}
         >
-          {safeTimer !== null ? (
-            <>
-                <span className="text-4xl font-mono font-bold text-amber-500 mb-2 animate-pulse">{safeTimer}s</span>
-                <span className="text-xs font-bold text-amber-600 uppercase">Counting Down</span>
-            </>
-          ) : (
-            <>
-                 <div className="w-16 h-16 rounded-full bg-zinc-700/50 flex items-center justify-center mb-3 group-hover:bg-zinc-700 transition-colors">
-                    <span className="text-3xl">⏱️</span>
-                </div>
-                <span className="font-bold text-zinc-300 tracking-wider">TIMER</span>
-            </>
-          )}
+           {safeTimer !== null ? (
+               <div className="flex flex-col items-center relative z-10">
+                   {/* Progress Ring Background would go here in complex implementation, simple text for now */}
+                   <span className="text-3xl font-mono font-bold text-amber-500 mb-1">{formatTime(safeTimer)}</span>
+                   <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider animate-pulse">Running</span>
+               </div>
+           ) : (
+               <div className="flex flex-col items-center">
+                   <span className="text-4xl mb-2">⏱️</span>
+                   <span className="font-bold text-zinc-400 text-sm tracking-wider">TIMER</span>
+               </div>
+           )}
         </button>
       </div>
 
-      {/* Cancel Timer Button */}
+      {/* Cancel Timer Bar */}
       {safeTimer !== null && (
           <button 
             onClick={() => setSafeTimer(null)} 
-            className="w-full bg-amber-600 hover:bg-amber-500 text-white py-4 rounded-lg font-bold text-lg uppercase tracking-widest shadow-lg animate-fade-in"
+            className="w-full bg-amber-600/10 border border-amber-500/50 text-amber-500 py-4 rounded-xl font-bold text-sm uppercase tracking-widest shadow-lg backdrop-blur-sm hover:bg-amber-600/20 transition-all"
           >
-              ABORT TIMER
+              Abort Countdown
           </button>
       )}
 
-      {/* Location Status Bar */}
-      <div className="bg-zinc-900 p-4 rounded-lg border border-zinc-800 flex justify-between items-center">
-          <div>
-              <h3 className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Current Coordinates</h3>
-              {currentLocation ? (
-                  <div className="flex items-baseline gap-2">
-                      <span className="text-white font-mono text-sm">{currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}</span>
-                      <a href={`https://maps.google.com/?q=${currentLocation.lat},${currentLocation.lng}`} target="_blank" className="text-blue-500 text-xs hover:underline ml-2">Open Map</a>
-                  </div>
-              ) : (
-                  <span className="text-red-500 text-sm font-bold flex items-center gap-2">
-                      {locationStatus === 'Permission Denied' ? (
-                          <button onClick={() => window.location.reload()} className="underline">Retry Permission</button>
-                      ) : locationStatus}
-                  </span>
-              )}
-          </div>
-          <div className="w-10 h-10 rounded bg-zinc-800 flex items-center justify-center text-zinc-500">
-             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                <path fillRule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-            </svg>
-          </div>
-      </div>
-
-      {/* Nearby Services List */}
-      <div className="border-t border-zinc-800 pt-6">
-        <h3 className="text-zinc-500 font-bold text-xs uppercase tracking-wider mb-4 px-1">Nearby Emergency Assets</h3>
-        <div className="space-y-2">
-            {loadingPlaces ? (
-                <div className="p-4 text-center text-zinc-600 text-sm font-mono animate-pulse">
-                    SCANNING FREQUENCIES...
-                </div>
-            ) : nearbyPlaces.length > 0 ? (
+      {/* Nearby Assets List */}
+      <div className="pt-2">
+        <div className="flex items-center justify-between mb-4 px-1">
+             <h3 className="text-zinc-500 font-bold text-[10px] uppercase tracking-widest">Detected Assets</h3>
+             {loadingPlaces && <span className="text-[10px] text-green-500 animate-pulse">Scanning...</span>}
+        </div>
+        
+        <div className="grid gap-3">
+            {!loadingPlaces && nearbyPlaces.length > 0 ? (
                 nearbyPlaces.map((place, idx) => (
                     <a 
                         key={idx} 
                         href={place.uri} 
                         target="_blank" 
                         rel="noreferrer" 
-                        className="block bg-zinc-900 hover:bg-zinc-800 p-4 rounded-lg border border-zinc-800 transition-colors group"
+                        className="flex items-center gap-4 bg-zinc-900/50 hover:bg-zinc-800 p-4 rounded-xl border border-zinc-800 transition-all group"
                     >
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-zinc-300 font-bold text-sm group-hover:text-white">{place.title}</span>
-                            <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-1 rounded font-mono">
-                                {place.distance}
-                            </span>
+                        <div className="w-10 h-10 rounded-full bg-blue-900/20 flex items-center justify-center text-blue-400 border border-blue-500/20 group-hover:scale-110 transition-transform">
+                            📍
                         </div>
-                        <div className="text-xs text-zinc-500 truncate">{place.address}</div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="text-zinc-200 font-bold text-sm truncate">{place.title}</span>
+                                <span className="text-[10px] font-mono text-blue-400 bg-blue-900/10 px-2 py-0.5 rounded border border-blue-500/10">
+                                    {place.distance || 'NEARBY'}
+                                </span>
+                            </div>
+                            <div className="text-xs text-zinc-500 truncate">{place.address}</div>
+                        </div>
                     </a>
                 ))
             ) : (
-                <div className="p-4 bg-zinc-900 rounded-lg border border-zinc-800 text-center text-zinc-500 text-sm">
-                    No verified stations nearby. 
-                    {currentLocation && (
-                        <a href={`https://www.google.com/maps/search/police/@${currentLocation.lat},${currentLocation.lng}`} target="_blank" className="text-blue-500 ml-2 hover:underline">Manual Search</a>
-                    )}
+                <div className="p-8 bg-zinc-900/30 rounded-xl border border-dashed border-zinc-800 text-center">
+                    <p className="text-zinc-600 text-xs">No assets detected in immediate vicinity.</p>
                 </div>
             )}
         </div>

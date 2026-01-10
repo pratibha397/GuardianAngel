@@ -19,7 +19,7 @@ const generateId = () => {
 };
 
 // --- TIMEOUT HELPER (Fixes Slow Login) ---
-// If the promise doesn't resolve in 2000ms, it rejects, forcing the fallback code to run.
+// If the promise doesn't resolve in ms, it rejects.
 const withTimeout = <T>(promise: Promise<T>, ms: number = 2000): Promise<T> => {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Network timeout - switching to local")), ms);
@@ -145,9 +145,9 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
     const searchEmail = email.trim().toLowerCase();
     const sanitizedEmail = sanitize(email);
     
-    // 1. Remote Lookup with Timeout
+    // 1. Remote Lookup with LONGER Timeout (5s) because this is critical
     try {
-        const snapshot = await withTimeout(get(child(ref(db), `users/${sanitizedEmail}`)));
+        const snapshot = await withTimeout(get(child(ref(db), `users/${sanitizedEmail}`)), 5000);
         if (snapshot.exists()) {
             const user = snapshot.val() as User;
             saveLocalUser(user);
