@@ -11,191 +11,123 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
   const [emailInput, setEmailInput] = useState('');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  const [previewName, setPreviewName] = useState<string | null>(null);
-  const [guardianDetails, setGuardianDetails] = useState<Record<string, {name: string, email: string}>>({});
+  
+  // Local state to store full guardian details (Name + Email)
+  const [guardianDetails, setGuardianDetails] = useState<{name: string, email: string}[]>([]);
 
-  const guardianList = currentUser.guardians || [];
-
-  // Effect to lookup user name as they type (Debounced)
+  // Load guardian details from DB whenever the currentUser.guardians list changes
   useEffect(() => {
-      const timeoutId = setTimeout(async () => {
-          if (emailInput.length > 5 && emailInput.includes('@')) {
-             const found = await findUserByEmail(emailInput);
-             if (found) {
-                 setPreviewName(found.name);
-             } else {
-                 setPreviewName(null);
-             }
-          } else {
-              setPreviewName(null);
-          }
-      }, 500);
-      return () => clearTimeout(timeoutId);
-  }, [emailInput]);
-
-  // Fetch guardian names for list
-  useEffect(() => {
-    const fetchNames = async () => {
-        const details: Record<string, {name: string, email: string}> = {};
-        for (const email of guardianList) {
-            if (guardianDetails[email]) {
-                details[email] = guardianDetails[email];
-                continue;
-            }
+    const loadDetails = async () => {
+        const list = currentUser.guardians || [];
+        const details = [];
+        for (const email of list) {
             const user = await findUserByEmail(email);
             if (user) {
-                details[email] = { name: user.name, email: user.email };
+                details.push({ name: user.name, email: user.email });
             } else {
-                details[email] = { name: "Unknown User", email: email };
+                details.push({ name: "Unknown User", email: email });
             }
         }
         setGuardianDetails(details);
     };
-    if (guardianList.length > 0) {
-        fetchNames();
-    }
-  }, [guardianList]);
+    loadDetails();
+  }, [currentUser.guardians]);
 
-  const addGuardian = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const normalizedEmail = emailInput.toLowerCase();
+    setMsg('');
+    setLoading(true);
     
-    if (guardianList.includes(normalizedEmail)) {
-        setMsg("User is already a guardian.");
+    const targetEmail = emailInput.toLowerCase().trim();
+
+    // 1. Validation
+    if (targetEmail === currentUser.email) {
+        setMsg("Cannot add yourself.");
+        setLoading(false);
+        return;
+    }
+    if (currentUser.guardians?.includes(targetEmail)) {
+        setMsg("User already in guardian list.");
+        setLoading(false);
         return;
     }
 
-    setLoading(true);
-    setMsg('');
-
-    try {
-        const targetUser = await findUserByEmail(normalizedEmail);
-
-        if (!targetUser) {
-            setMsg("User not found. They must register first.");
-            setLoading(false);
-            return;
-        }
-
-        if (targetUser.email === currentUser.email) {
-            setMsg("You cannot add yourself.");
-            setLoading(false);
-            return;
-        }
-
-        // Successfully fetched target user with NAME
-        const updatedUser = {
-            ...currentUser,
-            guardians: [...guardianList, targetUser.email]
-        };
-        
-        onUserUpdated(updatedUser);
-        
-        // Immediate UI Update for Name
-        setGuardianDetails(prev => ({
-            ...prev,
-            [targetUser.email]: { name: targetUser.name, email: targetUser.email }
-        }));
-
-        setEmailInput('');
-        setPreviewName(null);
-        setMsg(`Success! Added ${targetUser.name}.`);
-    } catch (error) {
-        console.error(error);
-        setMsg("Failed to add guardian.");
-    } finally {
+    // 2. Database Lookup
+    const userExists = await findUserByEmail(targetEmail);
+    if (!userExists) {
+        setMsg("User not found. They must register first.");
         setLoading(false);
+        return;
     }
+
+    // 3. Update User
+    const updatedList = [...(currentUser.guardians || []), targetEmail];
+    const updatedUser = { ...currentUser, guardians: updatedList };
+    
+    onUserUpdated(updatedUser);
+    setMsg(`Successfully added ${userExists.name}!`);
+    setEmailInput('');
+    setLoading(false);
   };
 
-  const removeGuardian = async (email: string) => {
-      if (!window.confirm(`Remove ${email} from guardians?`)) return;
+  const handleRemove = (emailToRemove: string) => {
+      if (!confirm(`Remove ${emailToRemove}?`)) return;
       
-      const updatedUser = {
-          ...currentUser,
-          guardians: guardianList.filter(g => g !== email)
-      };
-      
+      const updatedList = (currentUser.guardians || []).filter(e => e !== emailToRemove);
+      const updatedUser = { ...currentUser, guardians: updatedList };
       onUserUpdated(updatedUser);
   };
 
   return (
     <div className="space-y-6">
-      <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-32 h-32">
-                <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.352-.272-2.636-.759-3.807a.75.75 0 00-.724-.516 11.209 11.209 0 01-7.75-3.256zM8.25 10.5a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z" clipRule="evenodd" />
-            </svg>
-        </div>
-
-        <h2 className="text-3xl font-bold text-white mb-2 tracking-tight">Manage Guardians</h2>
-        <p className="text-gray-400 text-sm mb-6 max-w-md leading-relaxed">
-            Guardians are your safety net. They receive instant SOS alerts, live location tracking, and audio feeds during emergencies.
-        </p>
-
-        <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg items-start">
-            <div className="flex-1 relative">
-                <input 
-                    type="email" 
-                    placeholder="Enter guardian email"
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                    value={emailInput}
-                    onChange={e => setEmailInput(e.target.value)}
-                    required
-                />
-                {previewName && (
-                    <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-blue-500/50 rounded-xl px-4 py-2 text-sm text-blue-300 flex items-center gap-2 animate-fade-in shadow-xl z-20">
-                        <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
-                        Found: <span className="font-bold text-white">{previewName}</span>
-                    </div>
-                )}
-            </div>
-            <button 
-                type="submit" 
+      {/* Add Guardian Card */}
+      <div className="bg-card/40 border border-white/5 p-6 rounded-3xl">
+          <h2 className="text-2xl font-bold text-white mb-4">Add Guardian</h2>
+          <form onSubmit={handleAdd} className="flex flex-col gap-4">
+              <input 
+                type="email"
+                required
+                placeholder="Enter guardian's email"
+                className="bg-slate-800 p-4 rounded-xl text-white outline-none border border-white/10 focus:border-blue-500"
+                value={emailInput}
+                onChange={e => setEmailInput(e.target.value)}
+              />
+              <button 
+                type="submit"
                 disabled={loading}
-                className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-2xl text-white font-bold disabled:opacity-50 shadow-lg shadow-blue-900/20 transition-all hover:scale-105 h-full"
-            >
-                {loading ? '...' : 'Add'}
-            </button>
-        </form>
-        {msg && <p className={`mt-4 text-sm font-medium animate-fade-in ${msg.includes('Success') ? 'text-green-400' : 'text-amber-400'}`}>{msg}</p>}
+                className="bg-blue-600 p-4 rounded-xl text-white font-bold hover:bg-blue-500 transition-colors disabled:opacity-50"
+              >
+                  {loading ? 'Searching...' : 'Add Guardian'}
+              </button>
+              {msg && <p className={`text-sm ${msg.includes('Success') ? 'text-green-400' : 'text-red-400'}`}>{msg}</p>}
+          </form>
       </div>
 
-      <div className="grid gap-4">
-          <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider ml-2">Trusted Contacts ({guardianList.length})</h3>
-          {guardianList.length === 0 ? (
-              <div className="text-center py-12 bg-white/5 rounded-3xl border border-dashed border-white/10">
-                  <span className="text-4xl block mb-2 opacity-50">👥</span>
-                  <p className="text-gray-400 text-sm">No guardians added yet.<br/>Add someone you trust above.</p>
-              </div>
+      {/* List */}
+      <div className="space-y-3">
+          <h3 className="text-gray-400 font-bold uppercase text-xs tracking-wider">Your Guardians</h3>
+          {guardianDetails.length === 0 ? (
+              <p className="text-gray-500 text-sm">No guardians added yet.</p>
           ) : (
-              <div className="grid gap-3">
-                  {guardianList.map(email => {
-                      const details = guardianDetails[email] || { name: 'Loading...', email: email };
-                      return (
-                          <div key={email} className="flex justify-between items-center bg-card/60 backdrop-blur-sm p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group">
-                              <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
-                                    {details.name[0]?.toUpperCase() || email[0]?.toUpperCase()}
-                                  </div>
-                                  <div>
-                                      <div className="text-gray-200 font-medium text-lg">{details.name}</div>
-                                      <div className="text-sm text-gray-500">{details.email}</div>
-                                  </div>
-                              </div>
-                              <button 
-                                onClick={() => removeGuardian(email)}
-                                className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
-                                title="Remove Guardian"
-                              >
-                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                    <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.49 1.478 47.4 47.4 0 00-15.28 0 .75.75 0 01-.49-1.478 48.809 48.809 0 013.876-.512v-.227c0-1.005.81-1.847 1.819-1.936.85-.075 1.706-.115 2.568-.115.862 0 1.718.04 2.568.115 1.01.089 1.819.93 1.819 1.936zm-3.75 2.5a.75.75 0 00-1.5 0v7a.75.75 0 001.5 0v-7z" clipRule="evenodd" />
-                                  </svg>
-                              </button>
+              guardianDetails.map((g) => (
+                  <div key={g.email} className="bg-slate-800/50 p-4 rounded-xl flex justify-between items-center border border-white/5">
+                      <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">
+                              {g.name[0]?.toUpperCase()}
                           </div>
-                      );
-                  })}
-              </div>
+                          <div>
+                              <div className="text-white font-medium">{g.name}</div>
+                              <div className="text-gray-500 text-xs">{g.email}</div>
+                          </div>
+                      </div>
+                      <button 
+                        onClick={() => handleRemove(g.email)}
+                        className="text-gray-500 hover:text-red-400"
+                      >
+                          Remove
+                      </button>
+                  </div>
+              ))
           )}
       </div>
     </div>
