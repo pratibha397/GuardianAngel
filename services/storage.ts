@@ -64,7 +64,12 @@ const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
 
 export const getCurrentUser = (): User | null => {
   const stored = localStorage.getItem(CURRENT_USER_KEY);
-  return stored ? JSON.parse(stored) : null;
+  if (!stored) return null;
+  
+  const user = JSON.parse(stored);
+  // FIX: Ensure guardians array exists (Firebase might drop empty arrays)
+  if (!user.guardians) user.guardians = [];
+  return user;
 };
 
 export const logoutUser = () => {
@@ -96,8 +101,6 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
       await set(userRef, newUser);
   } catch (e) {
       console.error("Firebase registration failed:", e);
-      // We still return newUser to allow offline registration, 
-      // but warn that online features might be limited.
   }
 
   return newUser;
@@ -111,6 +114,7 @@ export const loginUser = async (email: string, password: string): Promise<User |
   const localUser = localUsers[sanitizedEmail];
   
   if (localUser && localUser.password === password) {
+      if (!localUser.guardians) localUser.guardians = []; // Safe check
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(localUser));
       return localUser;
   }
@@ -122,6 +126,9 @@ export const loginUser = async (email: string, password: string): Promise<User |
     if (snapshot.exists()) {
       const user = snapshot.val() as User;
       if (user.password === password) {
+        // FIX: Ensure guardians array exists
+        if (!user.guardians) user.guardians = [];
+        
         saveLocalUser(user);
         localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
         return user;
@@ -141,7 +148,7 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
   saveLocalUser(updatedUser);
 
-  // 2. Update Firebase (Await to ensure consistency)
+  // 2. Update Firebase
   try {
       await update(ref(db, `users/${sanitizedEmail}`), updatedUser);
   } catch (e) {
@@ -155,7 +162,10 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
     try {
         const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
         if (snapshot.exists()) {
-            return snapshot.val() as User;
+            const user = snapshot.val() as User;
+            // FIX: Ensure guardians array exists
+            if (!user.guardians) user.guardians = [];
+            return user;
         } else {
             console.log(`User ${sanitizedEmail} not found in DB`);
         }
@@ -170,8 +180,10 @@ export const getUsers = async (): Promise<User[]> => {
   try {
       const snapshot = await get(child(ref(db), 'users'));
       if (snapshot.exists()) {
-          // Merge remote users if needed, but for now just returning what we found if local is empty
-          // or just return local for speed.
+          const remoteUsers = Object.values(snapshot.val()) as User[];
+          // Fix arrays for remote users too
+          remoteUsers.forEach(u => { if (!u.guardians) u.guardians = []; });
+          return remoteUsers;
       }
   } catch {}
   return localUsers;
