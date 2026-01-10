@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
+import { updateUser } from '../services/storage';
 import { User } from '../types';
 
 interface SettingsProps {
   currentUser: User;
-  onUserUpdated: (user: User) => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ currentUser, onUserUpdated }) => {
+const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
   const [phrase, setPhrase] = useState(currentUser.dangerPhrase);
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
@@ -18,10 +18,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onUserUpdated }) => {
     }
     setSaving(true);
     const updated = { ...currentUser, dangerPhrase: phrase };
-    
-    // Call parent handler to update state and storage
-    await onUserUpdated(updated);
-    
+    await updateUser(updated);
     setMsg("Settings saved successfully.");
     setSaving(false);
     setTimeout(() => setMsg(''), 3000);

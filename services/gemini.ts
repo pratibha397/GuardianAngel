@@ -1,13 +1,15 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { PlaceResult } from '../types';
 
+// Initialize Gemini Client
 const getClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
   return new GoogleGenAI({ apiKey });
 };
 
-// --- Live Audio ---
+// --- Live Audio Monitoring ---
+
 export const startLiveMonitoring = async (
   dangerPhrase: string,
   onDangerDetected: (reason: string) => void,
@@ -15,48 +17,70 @@ export const startLiveMonitoring = async (
 ): Promise<{ stop: () => void }> => {
   const ai = getClient();
   const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+  
+  // Ask for microphone
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   
+  // System instruction to detect danger
   const sysInstruction = `
     You are a safety monitoring system. 
-    User Danger Phrase: "${dangerPhrase}".
-    If you hear "${dangerPhrase}" or distress, output "TRIGGER_DANGER: DETECTED".
-    Otherwise, transcribe briefly.
+    Your task is to listen to the user audio stream.
+    The user has set a specific danger phrase: "${dangerPhrase}".
+    
+    If you hear the phrase "${dangerPhrase}" (or a very close variation like "help me"), you MUST output the text "TRIGGER_DANGER: PHRASE_DETECTED".
+    
+    If you hear other clear signs of extreme distress (screaming, pleading for life, "call the police"), output "TRIGGER_DANGER: DISTRESS_DETECTED".
+
+    Otherwise, just transcribe what you hear normally. Do not be conversational. Just listen and monitor.
   `;
 
-  let sessionPromise = ai.live.connect({
+  let session: any = null;
+
+  const sessionPromise = ai.live.connect({
     model: 'gemini-2.5-flash-native-audio-preview-12-2025',
     callbacks: {
       onopen: () => {
+        console.log("Monitoring started");
+        
+        // Audio Streaming Logic
         const source = inputAudioContext.createMediaStreamSource(stream);
         const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-        scriptProcessor.onaudioprocess = (ev) => {
-          const inputData = ev.inputBuffer.getChannelData(0);
-          sessionPromise.then(sess => sess.sendRealtimeInput({ media: createBlob(inputData) }));
+        
+        scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+          const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+          const pcmBlob = createBlob(inputData);
+          sessionPromise.then((sess) => {
+            sess.sendRealtimeInput({ media: pcmBlob });
+          });
         };
+        
         source.connect(scriptProcessor);
         scriptProcessor.connect(inputAudioContext.destination);
       },
-      onmessage: (msg: LiveServerMessage) => {
-        const text = msg.serverContent?.outputTranscription?.text;
-        if (text) {
+      onmessage: (message: LiveServerMessage) => {
+        if (message.serverContent?.outputTranscription?.text) {
+             const text = message.serverContent.outputTranscription.text;
              onTranscription(text);
-             if (text.includes('TRIGGER_DANGER')) onDangerDetected(text);
+
+             if (text.includes('TRIGGER_DANGER')) {
+               onDangerDetected(text);
+             }
         }
       },
-      onerror: (err) => console.error(err),
+      onclose: () => console.log("Monitoring stopped"),
+      onerror: (err) => console.error("Gemini Live Error", err)
     },
     config: {
       systemInstruction: sysInstruction,
-      responseModalities: [Modality.AUDIO],
-      outputAudioTranscription: {},
+      responseModalities: [Modality.AUDIO], // We only need text output to analyze triggers, but AUDIO is required
+      outputAudioTranscription: {}, // Request transcription to get text
     }
   });
 
   return {
     stop: () => {
       sessionPromise.then(s => s.close());
-      stream.getTracks().forEach(t => t.stop());
+      stream.getTracks().forEach(track => track.stop());
       inputAudioContext.close();
     }
   };
@@ -65,7 +89,9 @@ export const startLiveMonitoring = async (
 function createBlob(data: Float32Array) {
   const l = data.length;
   const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) int16[i] = data[i] * 32768;
+  for (let i = 0; i < l; i++) {
+    int16[i] = data[i] * 32768;
+  }
   return {
     data: encode(new Uint8Array(int16.buffer)),
     mimeType: 'audio/pcm;rate=16000',
@@ -75,21 +101,19 @@ function createBlob(data: Float32Array) {
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
   return btoa(binary);
 }
 
-// --- Nearby Places ---
+// --- Nearby Places (Maps Grounding) ---
+
 export const getNearbyStations = async (lat: number, lng: number): Promise<PlaceResult[]> => {
   const ai = getClient();
   
   try {
-    // 1. Explicit Prompt demanding Tool Use
-    const prompt = `
-      Find exactly 5 nearby emergency services (Police Stations, Hospitals, Fire Stations).
-      Current location: ${lat}, ${lng}.
-      Use the Google Maps tool.
-    `;
+    const prompt = "Find the nearest police stations, hospitals, and fire stations. Provide the Name, Address, and Distance for each. Format each entry strictly as: Name | Address | Distance";
     
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -98,51 +122,58 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
         tools: [{ googleMaps: {} }],
         toolConfig: {
           retrievalConfig: {
-            latLng: { latitude: lat, longitude: lng }
+            latLng: {
+              latitude: lat,
+              longitude: lng
+            }
           }
         }
       }
     });
 
-    // 2. Robust Parsing
-    const places: PlaceResult[] = [];
-    const candidates = response.candidates || [];
+    const text = response.text || "";
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     
-    for (const candidate of candidates) {
-        const chunks = candidate.groundingMetadata?.groundingChunks || [];
-        for (const chunk of chunks) {
-            if (chunk.maps) {
-                places.push({
-                    title: chunk.maps.title || "Emergency Service",
-                    uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
-                    address: "View on Map",
-                    distance: "Nearby"
-                });
+    const places: PlaceResult[] = [];
+    const lines = text.split('\n');
+    
+    for (const line of lines) {
+        if (line.includes('|')) {
+            const parts = line.split('|').map(s => s.trim());
+            if (parts.length >= 2) {
+                const title = parts[0];
+                const address = parts[1];
+                const distance = parts[2] || "";
+
+                // Attempt to find a grounding chunk link
+                const chunk = chunks.find((c: any) => 
+                     c.web?.title && title.toLowerCase().includes(c.web.title.toLowerCase())
+                );
+                
+                // Use chunk URI if available, otherwise fallback to a search query
+                const uri = chunk?.web?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
+
+                places.push({ title, address, distance, uri });
             }
         }
     }
 
-    // 3. Fallback: If no tool chunks, return a generic link
+    // Fallback if parsing failed (e.g. model didn't follow format) and we have chunks
     if (places.length === 0) {
-        return [{
-            title: "Open Google Maps",
-            uri: `https://www.google.com/maps/search/emergency+services/@${lat},${lng},14z`,
-            address: "Click to find nearby services",
-            distance: "-"
-        }];
+         chunks.forEach((chunk: any) => {
+            if (chunk.web?.uri && chunk.web?.title) {
+                places.push({
+                    title: chunk.web.title,
+                    uri: chunk.web.uri,
+                    // If fallback to chunks, we don't have address/distance easily
+                });
+            }
+         });
     }
 
-    // Deduplicate
-    return places.filter((p, i, a) => a.findIndex(t => t.title === p.title) === i).slice(0, 5);
-
+    return places;
   } catch (e) {
-    console.error("Gemini Error:", e);
-    // 4. Error Fallback
-    return [{
-        title: "Search Nearby Services",
-        uri: `https://www.google.com/maps/search/emergency+services/@${lat},${lng},14z`,
-        address: "Click to view map",
-        distance: "Unknown"
-    }];
+    console.error("Error fetching nearby places:", e);
+    return [];
   }
 };
