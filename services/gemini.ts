@@ -113,7 +113,21 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
   const ai = getClient();
   
   try {
-    const prompt = "Find 5 nearby emergency services: Police Stations, Hospitals, and Fire Stations.";
+    // We ask the model to format the output strictly so we can parse address and distance
+    // The `googleMaps` tool handles the actual lookup logic
+    const prompt = `
+      I am at Latitude: ${lat}, Longitude: ${lng}.
+      Find all nearby Police Stations, Hospitals, and Fire Stations within a reasonable driving distance.
+      
+      List as many relevant stations as you can find (up to 15).
+      
+      For each station found, strictly output a single line in this format:
+      DETAILS: <Name> | <Address> | <Distance>
+      
+      Example:
+      DETAILS: Central Hospital | 123 Main St, City | 0.5 miles
+      DETAILS: City Police Dept | 456 Oak Ave | 1.2 km
+    `;
     
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -131,36 +145,53 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       }
     });
 
+    const text = response.text || "";
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const places: PlaceResult[] = [];
     
-    // Extract Maps Data
-    chunks.forEach((chunk: any) => {
-        if (chunk.maps) {
-            places.push({
-                title: chunk.maps.title || "Emergency Service",
-                uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(chunk.maps.title)}`,
-                address: "View on Map",
-                distance: "Nearby"
-            });
-        }
-    });
+    const lines = text.split('\n');
 
-    // If Maps data is missing, try Web data as fallback
+    for (const line of lines) {
+        if (line.trim().startsWith('DETAILS:')) {
+            const parts = line.replace('DETAILS:', '').split('|').map(s => s.trim());
+            if (parts.length >= 3) {
+                const title = parts[0];
+                const address = parts[1];
+                const distance = parts[2];
+
+                // Attempt to link with the official Maps URI from grounding chunks
+                // We fuzzy match the title
+                const matchedChunk = chunks.find((c: any) => 
+                    c.maps?.title && title.toLowerCase().includes(c.maps.title.toLowerCase())
+                );
+
+                const uri = matchedChunk?.maps?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
+
+                places.push({
+                    title,
+                    address,
+                    distance,
+                    uri
+                });
+            }
+        }
+    }
+
+    // Fallback: If text parsing yielded no results (model didn't follow format), use raw chunks
     if (places.length === 0) {
         chunks.forEach((chunk: any) => {
-            if (chunk.web) {
-                 places.push({
-                    title: chunk.web.title || "Emergency Info",
-                    uri: chunk.web.uri,
-                    address: "Web Result",
-                    distance: ""
+            if (chunk.maps) {
+                places.push({
+                    title: chunk.maps.title,
+                    uri: chunk.maps.uri,
+                    address: "View on Map",
+                    distance: "Nearby"
                 });
             }
         });
     }
-
-    // Deduplicate based on title
+    
+    // Deduplicate
     const uniquePlaces = places.filter((place, index, self) =>
         index === self.findIndex((p) => (
             p.title === place.title
