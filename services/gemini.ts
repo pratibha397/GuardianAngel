@@ -14,7 +14,6 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
   const ai = getClient();
   
   try {
-    // We use a specific delimiter "||" to avoid issues with commas in addresses
     const prompt = `
       I am located at Latitude: ${lat}, Longitude: ${lng}.
       
@@ -29,6 +28,7 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       PLACE: General Hospital || 123 Main St, New York || 0.8 miles
       PLACE: FDNY Station 4 || 5th Avenue || 1.2 km
       
+      If you cannot determine exact distance, put "Nearby".
       Do not include intro text. Just the list.
     `;
     
@@ -52,46 +52,38 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const places: PlaceResult[] = [];
     
-    // Regex matches "PLACE: Name || Address || Distance" handling potential extra whitespace
-    const regex = /PLACE:\s*(.*?)\s*\|\|\s*(.*?)\s*\|\|\s*(.*)/;
+    // Improved Regex to catch lines even if model adds extra spaces or bullets
+    const regex = /PLACE:\s*(.+?)\s*\|\|\s*(.+?)\s*\|\|\s*(.+)/;
     
     const lines = text.split('\n');
 
     for (const line of lines) {
-        // We clean the line of potential markdown bullets like "* PLACE:" or "- PLACE:"
         const cleanLine = line.replace(/^[\*\-\s]+/, '');
-        
         const match = cleanLine.match(regex);
+        
         if (match) {
             const title = match[1].trim();
             const address = match[2].trim();
             const distance = match[3].trim();
 
-            // Fuzzy match the title with the Grounding Chunks to get the official Google Maps URI
             const matchedChunk = chunks.find((c: any) => 
                 c.maps?.title && title.toLowerCase().includes(c.maps.title.toLowerCase())
             );
-
             const uri = matchedChunk?.maps?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
 
-            places.push({
-                title,
-                address,
-                distance,
-                uri
-            });
+            places.push({ title, address, distance, uri });
         }
     }
 
-    // Fallback: If strict parsing failed completely (places is empty), use the raw map chunks.
-    if (places.length === 0) {
+    // Fallback: If we didn't get formatted lines, use raw chunks
+    if (places.length === 0 && chunks.length > 0) {
         chunks.forEach((chunk: any) => {
             if (chunk.maps) {
                 places.push({
                     title: chunk.maps.title,
                     uri: chunk.maps.uri,
-                    address: "View on Map",
-                    distance: "Nearby" // Fallback text since distance wasn't parsed
+                    address: "View on Map for details", // Fallback text
+                    distance: "Nearby" 
                 });
             }
         });

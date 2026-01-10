@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import GuardianService from '../pages/Guardians';
 import { getNearbyStations } from '../services/gemini';
+import GuardianService from '../services/guardian';
 import { updateLiveLocation } from '../services/storage';
 import { PlaceResult, User } from '../types';
 
@@ -122,8 +122,12 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         if (navigator.geolocation) {
           setLoadingPlaces(true);
           const onSuccess = async (pos: GeolocationPosition) => {
-            const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
-            setNearbyPlaces(places);
+            try {
+                const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
+                setNearbyPlaces(places);
+            } catch (e) {
+                console.error("Failed to load places", e);
+            }
             setLoadingPlaces(false);
           };
           const onError = (err: GeolocationPositionError) => {
@@ -218,9 +222,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
               <div>
                   <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-0.5">My Current Location</h3>
                   {currentLocation ? (
-                      <p className="text-white font-mono text-sm tracking-wide">
+                      <a 
+                          href={`https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-300 hover:text-blue-200 font-mono text-sm tracking-wide underline decoration-blue-500/30 underline-offset-4"
+                      >
                           {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
-                      </p>
+                      </a>
                   ) : locError ? (
                        <span className="text-red-400 text-xs font-bold">{locError}</span>
                   ) : (
@@ -310,7 +319,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         ) : (
             <div className="text-center py-8 bg-white/5 rounded-2xl border border-dashed border-white/10">
                 <span className="text-4xl block mb-2 opacity-50">🗺️</span>
-                <p className="text-gray-400 text-sm">No nearby stations found.</p>
+                <p className="text-gray-400 text-sm">No nearby stations found.<br/>We will try again when you move.</p>
             </div>
         )}
       </div>
