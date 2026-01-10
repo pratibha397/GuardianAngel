@@ -142,8 +142,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         if (err.code === 1) setLocError("Permission denied");
         else if (err.code === 2) setLocError("Position unavailable");
         else if (err.code === 3) {
-            setLocError("High accuracy timeout, switching to battery saver mode...");
-            restartWatcher(false); // Restart with low accuracy
+            // Timeout: Don't show error, just fallback gracefully
+            console.log("High accuracy timeout, switching to standard accuracy...");
+            restartWatcher(false); 
         }
     };
 
@@ -153,7 +154,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         locationWatchId.current = navigator.geolocation.watchPosition(success, error, {
             enableHighAccuracy: highAccuracy,
             maximumAge: 10000, 
-            timeout: 10000    
+            timeout: 20000 // Increased timeout to 20s
         });
     };
 
@@ -205,13 +206,18 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
           console.error("Error fetching nearby location", err);
           // Retry with low accuracy if timeout
           if (err.code === 3) {
-              navigator.geolocation.getCurrentPosition(onSuccess, () => setLoadingPlaces(false), { enableHighAccuracy: false, timeout: 10000 });
+              navigator.geolocation.getCurrentPosition(
+                  onSuccess, 
+                  () => setLoadingPlaces(false), 
+                  { enableHighAccuracy: false, timeout: 10000 }
+              );
           } else {
               setLoadingPlaces(false);
           }
       };
 
-      navigator.geolocation.getCurrentPosition(onSuccess, onError, { enableHighAccuracy: true, timeout: 5000 });
+      // Increased initial timeout to 10s
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, { enableHighAccuracy: true, timeout: 10000 });
 
     } else {
         alert("Geolocation is not enabled.");
