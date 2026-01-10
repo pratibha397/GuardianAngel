@@ -1,14 +1,11 @@
 import { GoogleGenAI } from '@google/genai';
 import { PlaceResult } from '../types';
 
-// Initialize Gemini Client
 const getClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
   return new GoogleGenAI({ apiKey });
 };
-
-// --- Nearby Places (Maps Grounding) ---
 
 export const getNearbyStations = async (lat: number, lng: number): Promise<PlaceResult[]> => {
   const ai = getClient();
@@ -52,13 +49,13 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const places: PlaceResult[] = [];
     
-    // Improved Regex to catch lines even if model adds extra spaces or bullets
-    const regex = /PLACE:\s*(.+?)\s*\|\|\s*(.+?)\s*\|\|\s*(.+)/;
+    // Looser regex to capture content between delimiters even if whitespace varies
+    const regex = /PLACE:\s*([^|]+)\s*\|\|\s*([^|]+)\s*\|\|\s*(.+)/i;
     
     const lines = text.split('\n');
 
     for (const line of lines) {
-        const cleanLine = line.replace(/^[\*\-\s]+/, '');
+        const cleanLine = line.replace(/^[\*\-\s]+/, ''); // Remove bullets
         const match = cleanLine.match(regex);
         
         if (match) {
@@ -66,34 +63,34 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
             const address = match[2].trim();
             const distance = match[3].trim();
 
+            // Try to find exact map metadata
             const matchedChunk = chunks.find((c: any) => 
                 c.maps?.title && title.toLowerCase().includes(c.maps.title.toLowerCase())
             );
+            
             const uri = matchedChunk?.maps?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
 
             places.push({ title, address, distance, uri });
         }
     }
 
-    // Fallback: If we didn't get formatted lines, use raw chunks
+    // Fallback: If formatted parsing failed but we have chunks, use chunks directly
     if (places.length === 0 && chunks.length > 0) {
         chunks.forEach((chunk: any) => {
             if (chunk.maps) {
                 places.push({
                     title: chunk.maps.title,
                     uri: chunk.maps.uri,
-                    address: "View on Map for details", // Fallback text
+                    address: "View on Map", 
                     distance: "Nearby" 
                 });
             }
         });
     }
     
-    // Deduplicate by title
+    // Deduplicate
     const uniquePlaces = places.filter((place, index, self) =>
-        index === self.findIndex((p) => (
-            p.title === place.title
-        ))
+        index === self.findIndex((p) => p.title === place.title)
     );
 
     return uniquePlaces;
