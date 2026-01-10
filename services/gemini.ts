@@ -1,14 +1,13 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { PlaceResult } from '../types';
 
-// Initialize Gemini Client
 const getClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
   return new GoogleGenAI({ apiKey });
 };
 
-// --- Live Audio Monitoring (Unchanged) ---
+// --- Live Audio ---
 export const startLiveMonitoring = async (
   dangerPhrase: string,
   onDangerDetected: (reason: string) => void,
@@ -21,7 +20,7 @@ export const startLiveMonitoring = async (
   const sysInstruction = `
     You are a safety monitoring system. 
     User Danger Phrase: "${dangerPhrase}".
-    If you hear "${dangerPhrase}" or distress (screaming), output "TRIGGER_DANGER: DETECTED".
+    If you hear "${dangerPhrase}" or distress, output "TRIGGER_DANGER: DETECTED".
     Otherwise, transcribe briefly.
   `;
 
@@ -31,12 +30,10 @@ export const startLiveMonitoring = async (
       onopen: () => {
         const source = inputAudioContext.createMediaStreamSource(stream);
         const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-        
         scriptProcessor.onaudioprocess = (ev) => {
           const inputData = ev.inputBuffer.getChannelData(0);
           sessionPromise.then(sess => sess.sendRealtimeInput({ media: createBlob(inputData) }));
         };
-        
         source.connect(scriptProcessor);
         scriptProcessor.connect(inputAudioContext.destination);
       },
@@ -82,18 +79,16 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-// --- Nearby Places (Fixed) ---
-
+// --- Nearby Places ---
 export const getNearbyStations = async (lat: number, lng: number): Promise<PlaceResult[]> => {
   const ai = getClient();
   
   try {
-    // Highly specific prompt to ensure tool usage
+    // 1. Explicit Prompt demanding Tool Use
     const prompt = `
-      I am currently at latitude ${lat}, longitude ${lng}.
-      Find exactly 5 nearby emergency services.
-      Prioritize Police Stations, Hospitals, and Fire Stations.
-      Return their names and addresses using the Google Maps tool.
+      Find exactly 5 nearby emergency services (Police Stations, Hospitals, Fire Stations).
+      Current location: ${lat}, ${lng}.
+      Use the Google Maps tool.
     `;
     
     const response = await ai.models.generateContent({
@@ -109,7 +104,7 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       }
     });
 
-    // Parsing Logic
+    // 2. Robust Parsing
     const places: PlaceResult[] = [];
     const candidates = response.candidates || [];
     
@@ -118,27 +113,36 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
         for (const chunk of chunks) {
             if (chunk.maps) {
                 places.push({
-                    title: chunk.maps.title || "Unknown Place",
+                    title: chunk.maps.title || "Emergency Service",
                     uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
-                    address: "View details on map", // Metadata often doesn't have formatted address string, so we provide a link
+                    address: "View on Map",
                     distance: "Nearby"
                 });
             }
         }
     }
 
-    // Filter duplicates by title
-    const unique = places.filter((p, i, a) => a.findIndex(t => t.title === p.title) === i);
-    return unique.slice(0, 5); // Return max 5
+    // 3. Fallback: If no tool chunks, return a generic link
+    if (places.length === 0) {
+        return [{
+            title: "Open Google Maps",
+            uri: `https://www.google.com/maps/search/emergency+services/@${lat},${lng},14z`,
+            address: "Click to find nearby services",
+            distance: "-"
+        }];
+    }
+
+    // Deduplicate
+    return places.filter((p, i, a) => a.findIndex(t => t.title === p.title) === i).slice(0, 5);
 
   } catch (e) {
-    console.error("Gemini Maps Fetch Error:", e);
-    // Fallback if API fails: return generic search link
+    console.error("Gemini Error:", e);
+    // 4. Error Fallback
     return [{
-        title: "Emergency Services Search",
+        title: "Search Nearby Services",
         uri: `https://www.google.com/maps/search/emergency+services/@${lat},${lng},14z`,
-        address: "Click to search manually on Google Maps",
-        distance: "Click to view"
+        address: "Click to view map",
+        distance: "Unknown"
     }];
   }
 };

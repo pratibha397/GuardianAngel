@@ -5,16 +5,12 @@ import { db } from './firebase';
 const CURRENT_USER_KEY = 'guardian_current_user';
 
 // --- In-Memory Cache for Speed ---
-// This prevents re-fetching user details constantly, making the app feel instant.
 const userCache = new Map<string, User>();
 
-// Helper to sanitize email for Firebase paths
 const sanitize = (email: string) => email.toLowerCase().replace(/\./g, '_');
-
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
 
 // --- Session ---
-
 export const getCurrentUser = (): User | null => {
   const stored = localStorage.getItem(CURRENT_USER_KEY);
   return stored ? JSON.parse(stored) : null;
@@ -26,7 +22,6 @@ export const logoutUser = () => {
 };
 
 // --- User Logic ---
-
 export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'dangerPhrase'>): Promise<User | null> => {
   const sanitizedEmail = sanitize(user.email);
   const userRef = ref(db, `users/${sanitizedEmail}`);
@@ -50,8 +45,6 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
 
 export const loginUser = async (email: string, password: string): Promise<User | null> => {
   const sanitizedEmail = sanitize(email);
-  // Try cache first (unlikely on login, but good practice)
-  
   const userRef = ref(db, `users/${sanitizedEmail}`);
   const snapshot = await get(userRef);
   
@@ -69,25 +62,20 @@ export const loginUser = async (email: string, password: string): Promise<User |
 export const updateUser = async (updatedUser: User): Promise<void> => {
   const sanitizedEmail = sanitize(updatedUser.email);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
-  userCache.set(updatedUser.email, updatedUser); // Update cache
+  userCache.set(updatedUser.email, updatedUser);
   await update(ref(db, `users/${sanitizedEmail}`), updatedUser);
 };
 
 export const findUserByEmail = async (email: string): Promise<User | null> => {
     if (!email) return null;
-    
-    // 1. Check Cache (Instant)
-    if (userCache.has(email)) {
-        return userCache.get(email)!;
-    }
+    if (userCache.has(email)) return userCache.get(email)!;
 
-    // 2. Fetch from DB
     const sanitizedEmail = sanitize(email);
     try {
         const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
         if (snapshot.exists()) {
             const user = snapshot.val() as User;
-            userCache.set(email, user); // Save to cache
+            userCache.set(email, user);
             return user;
         }
     } catch (e) {
@@ -96,43 +84,60 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
     return null;
 };
 
-// Optimized to find contacts for chat
+// FAST Chat Contacts Loader
 export const getChatContacts = async (currentUser: User): Promise<{email: string, name: string}[]> => {
     const contactEmails = new Set<string>();
     
-    // 1. Add my guardians
+    // 1. Always add my guardians (Immediate)
     if (currentUser.guardians) {
         currentUser.guardians.forEach(e => contactEmails.add(e));
     }
 
-    // 2. Add people who added me (Scan all users - acceptable for this scale)
+    // 2. Try to find people who added me, but TIMEOUT after 1 second to prevent hanging
+    // This fixes the "Chat Loading Forever" bug if the DB is slow.
     try {
-        const snapshot = await get(ref(db, 'users'));
-        if (snapshot.exists()) {
-            const allUsers = Object.values(snapshot.val()) as User[];
-            allUsers.forEach(u => {
-                userCache.set(u.email, u); // Cache everyone we find
-                if (u.guardians && u.guardians.includes(currentUser.email)) {
-                    contactEmails.add(u.email);
+        const fetchAllPromise = get(ref(db, 'users'));
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject('timeout'), 1000));
+
+        await Promise.race([fetchAllPromise, timeoutPromise])
+            .then((snapshot: any) => {
+                if (snapshot.exists()) {
+                    const allUsers = Object.values(snapshot.val()) as User[];
+                    allUsers.forEach(u => {
+                        userCache.set(u.email, u);
+                        if (u.guardians && u.guardians.includes(currentUser.email)) {
+                            contactEmails.add(u.email);
+                        }
+                    });
                 }
+            })
+            .catch(() => {
+                // Ignore timeout, just proceed with guardians we have
+                console.log("Skipping full user scan due to latency.");
             });
-        }
     } catch (e) { console.error(e); }
 
-    // 3. Resolve names from Cache
+    // 3. Resolve names
     const results = [];
     for (const email of Array.from(contactEmails)) {
-        const u = await findUserByEmail(email);
-        results.push({
-            email: email,
-            name: u ? u.name : email.split('@')[0]
-        });
+        // Try cache first
+        let name = email.split('@')[0];
+        const cached = userCache.get(email);
+        if (cached) {
+            name = cached.name;
+        } else {
+             // Try fetching individually if not in cache
+             try {
+                const u = await findUserByEmail(email);
+                if (u) name = u.name;
+             } catch {}
+        }
+        results.push({ email, name });
     }
     return results;
 };
 
-// --- Chat Logic (Fast & Real-time) ---
-
+// --- Chat Logic ---
 const getChatId = (email1: string, email2: string) => {
   return [sanitize(email1), sanitize(email2)].sort().join('_');
 };
@@ -148,7 +153,6 @@ export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>): Promi
       timestamp: Date.now() 
   };
 
-  // Return promise but don't force UI to wait for it if they don't want to
   return set(newMessageRef, newMessage);
 };
 
@@ -176,7 +180,6 @@ export const deleteConversation = async (user1Email: string, user2Email: string)
 };
 
 // --- Alert Logic ---
-
 export const sendAlert = async (senderEmail: string, receiverEmail: string, reason: string, lat?: number, lng?: number) => {
     const alertId = generateId();
     const alert: Alert = {
@@ -197,7 +200,6 @@ export const sendAlert = async (senderEmail: string, receiverEmail: string, reas
 export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[]) => void) => {
     const userKey = sanitize(userEmail);
     const alertsRef = ref(db, `alerts/${userKey}`);
-    
     return onValue(alertsRef, (snapshot) => {
         if (snapshot.exists()) {
             callback(Object.values(snapshot.val()) as Alert[]);
