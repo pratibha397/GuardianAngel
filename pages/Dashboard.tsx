@@ -11,6 +11,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [alertActive, setAlertActive] = useState(false);
+  const [triggerReason, setTriggerReason] = useState('');
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
@@ -50,6 +51,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
+    // Format reason for display
+    let displayReason = reason;
+    if (reason.includes("PHRASE_DETECTED")) displayReason = `Danger Phrase "${currentUser.dangerPhrase}" Detected`;
+    else if (reason.includes("DISTRESS_DETECTED")) displayReason = "Distress Signals Detected";
+    
+    setTriggerReason(displayReason);
+    
     let lat, lng;
     try {
         const pos = await getRobustLocation();
@@ -65,13 +73,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         await sendMessage({
             senderEmail: currentUser.email,
             receiverEmail: gEmail,
-            text: `🚨 SOS! ALERT TRIGGERED: ${reason} ${!lat ? '(Location Unavailable)' : ''}`,
+            text: `🚨 SOS! ALERT TRIGGERED: ${displayReason} ${!lat ? '(Location Unavailable)' : ''}`,
             isLocation: !!lat,
             lat,
             lng
         });
         // Signal
-        await sendAlert(currentUser.email, gEmail, reason, lat, lng);
+        await sendAlert(currentUser.email, gEmail, displayReason, lat, lng);
     });
 
     if (isListening) toggleListening();
@@ -148,6 +156,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         <div className="fixed inset-0 z-[100] bg-red-600 flex flex-col items-center justify-center animate-pulse text-white p-8 text-center">
           <div className="text-9xl mb-4">🚨</div>
           <h1 className="text-5xl font-black mb-4 uppercase">SOS Sent</h1>
+          <div className="bg-red-800/50 px-6 py-2 rounded-xl border border-red-400/50 mb-8 backdrop-blur-sm">
+             <p className="text-lg font-bold text-red-100">Detection: {triggerReason}</p>
+          </div>
           <p className="text-xl mb-8 opacity-90">Guardians have been notified.</p>
           <button 
             onClick={() => { setAlertActive(false); window.location.reload(); }} 
@@ -257,38 +268,61 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
           </button>
       )}
 
-      {/* Nearby Stations */}
-      <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 shadow-sm">
-        <h3 className="text-white font-bold mb-4 flex items-center gap-2">
-            📍 Nearby Stations
-        </h3>
+      {/* Nearby Stations List */}
+      <div className="bg-slate-800 rounded-2xl border border-slate-700 shadow-sm overflow-hidden flex flex-col max-h-96">
+        <div className="p-4 border-b border-slate-700 bg-slate-800/80 backdrop-blur-sm sticky top-0 z-10">
+            <h3 className="text-white font-bold flex items-center gap-2">
+                📍 Nearby Emergency Services
+            </h3>
+        </div>
         
-        {loadingPlaces ? (
-            <div className="py-8 text-center text-slate-500 text-sm animate-pulse">Scanning nearby services...</div>
-        ) : nearbyPlaces.length > 0 ? (
-            <div className="space-y-3">
-                {nearbyPlaces.map((place, idx) => (
-                    <a 
-                        key={idx} 
-                        href={place.uri} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="block bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors"
-                    >
-                        <div className="flex justify-between items-start">
-                            <span className="text-slate-200 font-medium text-sm">{place.title}</span>
-                            <span className="text-[10px] bg-slate-600 text-blue-300 px-2 py-0.5 rounded-full">Go</span>
+        <div className="overflow-y-auto p-2 space-y-2 no-scrollbar">
+            {loadingPlaces ? (
+                <div className="py-12 text-center text-slate-500 text-sm animate-pulse flex flex-col items-center">
+                    <span className="block mb-2 text-2xl">📡</span>
+                    Scanning area...
+                </div>
+            ) : nearbyPlaces.length > 0 ? (
+                <>
+                    {nearbyPlaces.map((place, idx) => (
+                        <a 
+                            key={idx} 
+                            href={place.uri} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="block bg-slate-700/30 hover:bg-slate-700 p-3 rounded-xl transition-colors group"
+                        >
+                            <div className="flex justify-between items-start">
+                                <span className="text-slate-200 font-medium text-sm group-hover:text-blue-300 transition-colors">{place.title}</span>
+                                <span className="text-[10px] bg-slate-600 text-slate-300 px-2 py-0.5 rounded-full whitespace-nowrap ml-2">
+                                    {place.distance}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-end mt-1">
+                                <div className="text-xs text-slate-400 truncate max-w-[80%]">{place.address}</div>
+                                <div className="text-slate-500 group-hover:text-blue-400">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                            </div>
+                        </a>
+                    ))}
+                    <div className="p-2 text-center text-xs text-slate-500">
+                        {nearbyPlaces.length} locations found
+                    </div>
+                </>
+            ) : (
+                <div className="py-8 text-center text-slate-500 text-sm">
+                    No stations found nearby. 
+                    {currentLocation && (
+                        <div className="mt-2">
+                            <a href={`https://www.google.com/maps/search/police/@${currentLocation.lat},${currentLocation.lng}`} target="_blank" className="text-blue-400 hover:underline">Open Google Maps</a>
                         </div>
-                        {place.address && <div className="text-xs text-slate-400 mt-1 truncate">{place.address}</div>}
-                    </a>
-                ))}
-            </div>
-        ) : (
-            <div className="py-6 text-center text-slate-500 text-sm">
-                No stations found. 
-                {currentLocation && <a href={`https://www.google.com/maps/search/police/@${currentLocation.lat},${currentLocation.lng}`} target="_blank" className="text-blue-400 ml-1 hover:underline">Search Maps</a>}
-            </div>
-        )}
+                    )}
+                </div>
+            )}
+        </div>
       </div>
     </div>
   );

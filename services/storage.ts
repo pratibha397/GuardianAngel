@@ -45,13 +45,6 @@ const saveLocalMessage = (chatId: string, msg: Message) => {
     localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
 };
 
-const getLocalAlerts = (userEmail: string): Alert[] => {
-    try {
-        const all = JSON.parse(localStorage.getItem(ALERTS_STORAGE_KEY) || '{}');
-        return all[sanitize(userEmail)] || [];
-    } catch { return []; }
-};
-
 const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
     const key = sanitize(recipientEmail);
     const all = JSON.parse(localStorage.getItem(ALERTS_STORAGE_KEY) || '{}');
@@ -60,17 +53,6 @@ const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
     localStorage.setItem(ALERTS_STORAGE_KEY, JSON.stringify(all));
 };
 
-
-// Helper: Run promise with short timeout
-const withTimeout = <T>(promise: Promise<T>, ms: number = 3000): Promise<T> => {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timeout")), ms);
-        promise.then(
-            (res) => { clearTimeout(timer); resolve(res); },
-            (err) => { clearTimeout(timer); reject(err); }
-        );
-    });
-};
 
 // --- Session Management ---
 
@@ -146,32 +128,38 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   update(ref(db, `users/${sanitizedEmail}`), updatedUser).catch(console.warn);
 };
 
-// CRITICAL FIX: Robust User Lookup
+// CRITICAL FIX: Force Fetch for User Lookup
 export const findUserByEmail = async (email: string): Promise<User | null> => {
     const searchEmail = email.trim().toLowerCase();
     const sanitizedEmail = sanitize(email);
     
-    // 1. Try direct key lookup (Fastest)
+    // 1. Direct Remote Lookup (Best for consistency)
     try {
         const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
         if (snapshot.exists()) {
-            return snapshot.val() as User;
+            const user = snapshot.val() as User;
+            saveLocalUser(user);
+            return user;
         }
     } catch (e) { console.warn("Direct lookup failed", e); }
     
-    // 2. Scan all users (Nuclear option for reliability)
+    // 2. Scan All Users (Fallback if keys are messed up)
     try {
         const snapshot = await get(child(ref(db), 'users'));
         if (snapshot.exists()) {
             const allUsers = snapshot.val();
+            // Iterate and match email field directly
             const match = Object.values(allUsers).find((u: any) => 
                 u.email && u.email.trim().toLowerCase() === searchEmail
             );
-            if (match) return match as User;
+            if (match) {
+                saveLocalUser(match as User);
+                return match as User;
+            }
         }
     } catch (e) { console.warn("Scan failed", e); }
 
-    // 3. Local Fallback
+    // 3. Local Fallback (Last resort)
     const local = getLocalUsers();
     return Object.values(local).find(u => u.email.toLowerCase() === searchEmail) || null;
 };

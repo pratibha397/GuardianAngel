@@ -4,9 +4,10 @@ import { User } from '../types';
 
 interface SettingsProps {
   currentUser: User;
+  onUpdateUser: (user: User) => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
+const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateUser }) => {
   const [phrase, setPhrase] = useState(currentUser.dangerPhrase);
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
@@ -19,13 +20,14 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     setSaving(true);
     const updated = { ...currentUser, dangerPhrase: phrase };
     await updateUser(updated);
+    onUpdateUser(updated); // Update app state immediately
     setMsg("Settings saved successfully.");
     setSaving(false);
     setTimeout(() => setMsg(''), 3000);
   };
 
   return (
-  <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden">
+    <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden">
       <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
 
       <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
@@ -35,10 +37,13 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
       
       <div className="mb-8 p-6 bg-slate-800/30 rounded-2xl border border-white/5 hover:border-blue-500/20 transition-colors">
           <label className="block text-blue-400 text-sm font-bold uppercase tracking-wider mb-3">Danger Trigger Phrase</label>
-          <div className="relative"><input type="text" className="w-full bg-slate-900/50 border border-white/10 rounded-xl p-4 pl-12 text-white text-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-600"
+          <div className="relative">
+              <input 
+                type="text"
+                className="w-full bg-slate-900/50 border border-white/10 rounded-xl p-4 pl-12 text-white text-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-600"
                 value={phrase}
                 onChange={e => setPhrase(e.target.value)}
-                placeholder="e.g. Help me now"
+                placeholder="e.g. Help"
               />
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
                 🎤
@@ -46,7 +51,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
           </div>
           <p className="text-xs text-gray-500 mt-3 leading-relaxed">
             The system continuously monitors for this phrase when "Active Shield" is enabled. 
-            Choose a phrase that is unique but natural to say in an emergency.
+            Default is <strong>"help"</strong>. Choose a phrase that is natural to say in an emergency.
           </p>
       </div>
 
