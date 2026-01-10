@@ -12,55 +12,55 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children, currentUser, currentRoute, onNavigate, onLogout }) => {
   if (!currentUser) {
     return (
-        <div className="min-h-screen bg-zinc-950 text-zinc-200">
-             {children}
+        <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center p-4 relative overflow-hidden">
+             {/* Abstract background blobs */}
+             <div className="absolute top-0 left-0 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+             <div className="absolute top-0 right-0 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+             <div className="absolute -bottom-8 left-20 w-72 h-72 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-4000"></div>
+             <div className="z-10 w-full max-w-md">{children}</div>
         </div>
     );
   }
 
-  const NavItem = ({ route, label, icon }: { route: AppRoute; label: string; icon: React.ReactNode }) => {
+  const NavItem = ({ route, label, icon }: { route: AppRoute; label: string; icon: string }) => {
     const isActive = currentRoute === route;
     return (
       <button
         onClick={() => onNavigate(route)}
-        className={`flex flex-col items-center justify-center w-full py-3 px-1 rounded-lg transition-all duration-200 ${
+        className={`flex flex-col items-center justify-center w-full py-2 px-1 rounded-xl transition-all duration-300 ${
           isActive 
-            ? 'text-white bg-white/5' 
-            : 'text-zinc-500 hover:text-zinc-300'
+            ? 'text-blue-400 -translate-y-2' 
+            : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
         }`}
       >
-        <span className={`mb-1 ${isActive ? 'scale-105' : ''}`}>
-            {icon}
-        </span>
-        <span className="text-[10px] font-bold uppercase tracking-wider">
-            {label}
-        </span>
+        <span className={`text-2xl mb-1 transition-transform ${isActive ? 'scale-110 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : ''}`}>{icon}</span>
+        <span className="text-[10px] font-medium tracking-wide">{label}</span>
+        {isActive && <div className="w-1 h-1 bg-blue-500 rounded-full mt-1"></div>}
       </button>
     );
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex flex-col text-zinc-200 font-sans">
-      
+    <div className="min-h-screen bg-dark flex flex-col relative bg-gradient-to-b from-slate-900 to-slate-950">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-white/5 px-6 py-4 flex justify-between items-center">
-        <h1 className="text-sm font-bold text-white tracking-widest flex items-center gap-3">
-          <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center shadow-lg shadow-blue-900/20">
-            <span className="text-[10px]">🛡️</span>
+      <header className="sticky top-0 z-50 backdrop-blur-md bg-dark/70 border-b border-white/5 px-6 py-4 flex justify-between items-center shadow-lg shadow-black/20">
+        <h1 className="text-xl font-black text-white tracking-widest flex items-center gap-2">
+          <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-cyan-400 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/30">
+            🛡️
           </div>
-          <span>SENTINEL</span>
+          <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">SENTINEL</span>
         </h1>
-        <div className="flex items-center gap-4">
-            <div className="hidden sm:flex flex-col items-end">
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">Operator</span>
-                <span className="text-xs font-bold text-white">{currentUser.name}</span>
+        <div className="flex items-center gap-3">
+            <div className="flex flex-col items-end hidden sm:flex">
+                <span className="text-xs text-gray-400">Logged in as</span>
+                <span className="text-sm font-bold text-gray-200">{currentUser.name}</span>
             </div>
             <button 
                 onClick={onLogout}
-                className="p-2 rounded-lg bg-zinc-900 hover:bg-red-900/20 hover:text-red-400 text-zinc-400 transition-colors border border-zinc-800"
+                className="p-2 rounded-full bg-gray-800/50 hover:bg-red-500/20 hover:text-red-400 transition-colors border border-white/5"
                 title="Logout"
             >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
                 </svg>
             </button>
@@ -68,24 +68,16 @@ const Layout: React.FC<LayoutProps> = ({ children, currentUser, currentRoute, on
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-4 pb-32 max-w-3xl mx-auto w-full no-scrollbar">
+      <main className="flex-1 overflow-y-auto p-4 pb-32 max-w-4xl mx-auto w-full no-scrollbar">
         {children}
       </main>
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/5 flex justify-around p-2 pb-6 z-40">
-        <NavItem route={AppRoute.DASHBOARD} label="Ops" icon={
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
-        } />
-        <NavItem route={AppRoute.GUARDIANS} label="Unit" icon={
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
-        } />
-        <NavItem route={AppRoute.CHAT} label="Comms" icon={
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
-        } />
-        <NavItem route={AppRoute.SETTINGS} label="Config" icon={
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077l1.41-.513m14.095-5.13l1.41-.513M5.106 17.785l1.15-.964m11.49-9.642l1.149-.964M7.501 19.795l.75-1.3m7.5-12.99l.75-1.3m-6.063 16.658l.26-1.477m2.605-14.772l.26-1.477m0 17.726l-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.795l-.75-1.3m-7.5-12.99l-.75-1.3m11.49 11.56l-1.149-.964m-11.49-9.642l-1.15-.964m14.095 5.13l-1.41-.513M5.106 10.215l-1.41-.513M9 12a3 3 0 116 0 3 3 0 01-6 0z" /></svg>
-        } />
+      <nav className="fixed bottom-6 left-4 right-4 bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl flex justify-around p-2 shadow-2xl z-40 max-w-lg mx-auto">
+        <NavItem route={AppRoute.DASHBOARD} label="Home" icon="🏠" />
+        <NavItem route={AppRoute.GUARDIANS} label="Guardians" icon="👥" />
+        <NavItem route={AppRoute.CHAT} label="Comms" icon="💬" />
+        <NavItem route={AppRoute.SETTINGS} label="Settings" icon="⚙️" />
       </nav>
     </div>
   );

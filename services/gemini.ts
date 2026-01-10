@@ -24,15 +24,14 @@ export const startLiveMonitoring = async (
   // System instruction to detect danger
   const sysInstruction = `
     You are a safety monitoring system. 
-    Your task is to listen to the user audio stream for specific trigger words.
+    Your task is to listen to the user audio stream.
+    The user has set a specific danger phrase: "${dangerPhrase}".
     
-    The PRIMARY trigger word is: "${dangerPhrase}".
+    If you hear the phrase "${dangerPhrase}" (or a very close variation like "help me"), you MUST output the text "TRIGGER_DANGER: PHRASE_DETECTED".
     
-    Instructions:
-    1. If you hear the word "${dangerPhrase}" clearly, output "TRIGGER_DANGER: PHRASE_DETECTED".
-    2. If you hear variations like "${dangerPhrase} me", "please ${dangerPhrase}", output "TRIGGER_DANGER: PHRASE_DETECTED".
-    3. If you hear clear distress signals (screaming, crying, "call police"), output "TRIGGER_DANGER: DISTRESS_DETECTED".
-    4. Otherwise, just transcribe what you hear normally. Do not be conversational. Just listen and monitor.
+    If you hear other clear signs of extreme distress (screaming, pleading for life, "call the police"), output "TRIGGER_DANGER: DISTRESS_DETECTED".
+
+    Otherwise, just transcribe what you hear normally. Do not be conversational. Just listen and monitor.
   `;
 
   let session: any = null;
@@ -73,8 +72,8 @@ export const startLiveMonitoring = async (
     },
     config: {
       systemInstruction: sysInstruction,
-      responseModalities: [Modality.AUDIO], 
-      outputAudioTranscription: {}, 
+      responseModalities: [Modality.AUDIO], // We only need text output to analyze triggers, but AUDIO is required
+      outputAudioTranscription: {}, // Request transcription to get text
     }
   });
 
@@ -114,8 +113,7 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
   const ai = getClient();
   
   try {
-    // UPDATED PROMPT: Requesting distance and explicit list structure
-    const prompt = "Find all nearby police stations, hospitals, and fire stations. For each, strictly provide the Name, full Address, and estimated Distance from my current location in a list.";
+    const prompt = "Find the nearest police stations, hospitals, and fire stations. Provide the Name, Address, and Distance for each. Format each entry strictly as: Name | Address | Distance";
     
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -133,40 +131,49 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       }
     });
 
-    // Extract chunks from Maps Grounding
+    const text = response.text || "";
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    
     const places: PlaceResult[] = [];
+    const lines = text.split('\n');
+    
+    for (const line of lines) {
+        if (line.includes('|')) {
+            const parts = line.split('|').map(s => s.trim());
+            if (parts.length >= 2) {
+                const title = parts[0];
+                const address = parts[1];
+                const distance = parts[2] || "";
 
-    // Parse specifically for Maps chunks
-    chunks.forEach((chunk: any) => {
-        // The API can return data in `web` OR `source` depending on exact version/result type
-        if (chunk.web?.title && chunk.web?.uri) {
-             // We try to simulate a distance or extract it if available, 
-             // but often distance isn't in the raw chunk metadata, so we default to "Nearby" 
-             // unless we parse the text. For robustness, we stick to metadata but label it clearly.
-             places.push({
-                 title: chunk.web.title,
-                 uri: chunk.web.uri,
-                 address: "View details on map",
-                 distance: "📍 Nearby" 
-             });
+                // Attempt to find a grounding chunk link
+                const chunk = chunks.find((c: any) => 
+                     c.web?.title && title.toLowerCase().includes(c.web.title.toLowerCase())
+                );
+                
+                // Use chunk URI if available, otherwise fallback to a search query
+                const uri = chunk?.web?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
+
+                places.push({ title, address, distance, uri });
+            }
         }
-    });
+    }
 
-    // Simple fallback if API returns nothing useful
+    // Fallback if parsing failed (e.g. model didn't follow format) and we have chunks
     if (places.length === 0) {
-        return [
-            { title: "Local Police Dept", uri: `https://www.google.com/maps/search/police+station/@${lat},${lng},14z`, address: "Emergency Service", distance: "~1.2 km" },
-            { title: "General Hospital", uri: `https://www.google.com/maps/search/hospital/@${lat},${lng},14z`, address: "Medical Center", distance: "~2.5 km" },
-            { title: "City Fire Station", uri: `https://www.google.com/maps/search/fire+station/@${lat},${lng},14z`, address: "Fire Response", distance: "~3.0 km" },
-        ];
+         chunks.forEach((chunk: any) => {
+            if (chunk.web?.uri && chunk.web?.title) {
+                places.push({
+                    title: chunk.web.title,
+                    uri: chunk.web.uri,
+                    // If fallback to chunks, we don't have address/distance easily
+                });
+            }
+         });
     }
 
     return places;
   } catch (e) {
     console.error("Error fetching nearby places:", e);
-    return [
-        { title: "Emergency Services Map", uri: `https://www.google.com/maps/search/emergency/@${lat},${lng},13z`, address: "View Area on Google Maps", distance: "--" },
-    ];
+    return [];
   }
 };

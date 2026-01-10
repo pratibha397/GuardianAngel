@@ -63,6 +63,8 @@ const App: React.FC = () => {
   const handleAcknowledge = () => {
       stopAlarm();
       setIncomingAlert(null);
+      // In a real app, we would update the alert status in Firebase here
+      // But for now, local state clear is sufficient for the receiver UI
       if (incomingAlert) {
          setCurrentRoute(AppRoute.CHAT); // Go to chat to help
       }
@@ -79,10 +81,6 @@ const App: React.FC = () => {
     setCurrentRoute(AppRoute.AUTH);
   };
 
-  const handleUpdateUser = (updatedUser: User) => {
-    setCurrentUser(updatedUser);
-  };
-
   const renderContent = () => {
     if (!currentUser) return <Auth onLogin={handleLogin} />;
 
@@ -94,7 +92,7 @@ const App: React.FC = () => {
       case AppRoute.CHAT:
         return <Chat currentUser={currentUser} />;
       case AppRoute.SETTINGS:
-        return <Settings currentUser={currentUser} onUpdateUser={handleUpdateUser} />;
+        return <Settings currentUser={currentUser} />;
       default:
         return <Dashboard currentUser={currentUser} />;
     }

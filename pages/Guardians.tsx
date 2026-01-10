@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { findUserByEmail, updateUser } from '../services/storage';
+import React, { useState } from 'react';
+import { getUsers, updateUser } from '../services/storage';
 import { User } from '../types';
 
 interface GuardiansProps {
@@ -8,79 +8,54 @@ interface GuardiansProps {
 
 const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
   const [emailInput, setEmailInput] = useState('');
-  const [msg, setMsg] = useState<{type: 'success' | 'error' | 'info', text: string} | null>(null);
+  const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  
-  // State to hold detailed guardian profiles (names, etc.)
-  const [guardianProfiles, setGuardianProfiles] = useState<User[]>([]);
-  const [loadingProfiles, setLoadingProfiles] = useState(false);
-
-  // Fetch full details of guardians on mount
-  useEffect(() => {
-      const fetchProfiles = async () => {
-          setLoadingProfiles(true);
-          const profiles: User[] = [];
-          for (const email of currentUser.guardians) {
-              try {
-                  const user = await findUserByEmail(email);
-                  if (user) profiles.push(user);
-                  else profiles.push({ name: 'Unknown', email: email } as User); // Fallback
-              } catch (e) { console.error(e); }
-          }
-          setGuardianProfiles(profiles);
-          setLoadingProfiles(false);
-      };
-      if (currentUser.guardians.length > 0) fetchProfiles();
-      else setGuardianProfiles([]);
-  }, [currentUser.guardians]);
 
   const addGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
-    const emailToAdd = emailInput.trim();
-    if (!emailToAdd) return;
-    
-    if (currentUser.guardians.includes(emailToAdd)) {
-        setMsg({ type: 'error', text: "Already in your unit." });
-        return;
-    }
-    if (emailToAdd.toLowerCase() === currentUser.email.toLowerCase()) {
-        setMsg({ type: 'error', text: "Cannot add yourself." });
+    if (currentUser.guardians.includes(emailInput)) {
+        setMsg("User is already a guardian.");
         return;
     }
 
     setLoading(true);
-    setMsg(null);
+    setMsg('');
 
     try {
-        const targetUser = await findUserByEmail(emailToAdd);
+        const allUsers = await getUsers();
+        const targetUser = allUsers.find(u => u.email === emailInput);
 
         if (!targetUser) {
-            setMsg({ 
-                type: 'error', 
-                text: "User not found. They must register first." 
-            });
+            setMsg("User not found. They must register first.");
+            setLoading(false);
+            return;
+        }
+
+        if (targetUser.email === currentUser.email) {
+            setMsg("You cannot add yourself.");
             setLoading(false);
             return;
         }
 
         const updatedUser = {
             ...currentUser,
-            guardians: [...currentUser.guardians, targetUser.email]
+            guardians: [...currentUser.guardians, emailInput]
         };
         
         await updateUser(updatedUser);
         setEmailInput('');
-        setMsg({ type: 'success', text: `Unit Updated: ${targetUser.name} added.` });
+        setMsg("Guardian added successfully.");
     } catch (error) {
         console.error(error);
-        setMsg({ type: 'error', text: "Connection failure." });
+        setMsg("Failed to add guardian.");
     } finally {
         setLoading(false);
     }
   };
 
   const removeGuardian = async (email: string) => {
-      if (!window.confirm(`Detach ${email} from unit?`)) return;
+      if (!window.confirm(`Remove ${email} from guardians?`)) return;
+      
       const updatedUser = {
           ...currentUser,
           guardians: currentUser.guardians.filter(g => g !== email)
@@ -90,93 +65,71 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
   };
 
   return (
-    <div className="space-y-8">
-      {/* Add Section */}
-      <div className="bg-zinc-900/50 backdrop-blur-sm p-6 rounded-3xl border border-zinc-700/50 shadow-xl">
-        <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="text-blue-500">➕</span> Add Unit Member
-            </h2>
+    <div className="space-y-6">
+      <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-32 h-32">
+                <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.352-.272-2.636-.759-3.807a.75.75 0 00-.724-.516 11.209 11.209 0 01-7.75-3.256zM8.25 10.5a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z" clipRule="evenodd" />
+            </svg>
         </div>
 
-        <form onSubmit={addGuardian} className="space-y-4 relative">
-            <div className="relative group">
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl opacity-20 group-hover:opacity-40 transition duration-500"></div>
-                <input 
-                    type="email" 
-                    placeholder="Enter agent email..."
-                    className="relative w-full bg-black border border-zinc-800 rounded-xl px-5 py-4 text-white placeholder:text-zinc-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all font-mono text-sm"
-                    value={emailInput}
-                    onChange={e => setEmailInput(e.target.value)}
-                    required
-                />
-            </div>
-            
-            {msg && (
-                <div className={`text-xs font-mono p-2 rounded border ${
-                    msg.type === 'success' ? 'bg-green-900/20 text-green-400 border-green-500/20' : 
-                    'bg-red-900/20 text-red-400 border-red-500/20'
-                }`}>
-                    {msg.type === 'error' && <span className="font-bold mr-1">ERROR:</span>}
-                    {msg.text}
-                </div>
-            )}
+        <h2 className="text-3xl font-bold text-white mb-2 tracking-tight">Manage Guardians</h2>
+        <p className="text-gray-400 text-sm mb-6 max-w-md leading-relaxed">
+            Guardians are your safety net. They receive instant SOS alerts, live location tracking, and audio feeds during emergencies.
+        </p>
 
+        <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg">
+            <input 
+                type="email" 
+                placeholder="Enter guardian email"
+                className="flex-1 bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                value={emailInput}
+                onChange={e => setEmailInput(e.target.value)}
+                required
+            />
             <button 
                 type="submit" 
                 disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl text-white font-bold uppercase tracking-widest text-xs shadow-lg shadow-blue-900/20 transition-all"
+                className="bg-blue-600 hover:bg-blue-500 px-8 rounded-2xl text-white font-bold disabled:opacity-50 shadow-lg shadow-blue-900/20 transition-all hover:scale-105"
             >
-                {loading ? 'Verifying Identity...' : 'Authorize User'}
+                {loading ? '...' : 'Add'}
             </button>
         </form>
+        {msg && <p className={`mt-4 text-sm font-medium animate-fade-in ${msg.includes('success') ? 'text-green-400' : 'text-amber-400'}`}>{msg}</p>}
       </div>
 
-      {/* List Section */}
-      <div>
-          <h3 className="text-zinc-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-4 pl-1">Active Guardians</h3>
-          
-          {loadingProfiles ? (
-              <div className="text-center py-8 text-zinc-600 text-xs animate-pulse">Loading Unit Data...</div>
-          ) : guardianProfiles.length === 0 ? (
-              <div className="bg-zinc-900/30 rounded-2xl p-8 text-center border border-dashed border-zinc-800">
-                  <p className="text-zinc-500 text-sm mb-4">No active guardians assigned.</p>
-                  <button 
-                    onClick={() => {
-                        navigator.clipboard.writeText(currentUser.email);
-                        setMsg({type:'info', text: 'ID Copied.'});
-                    }}
-                    className="text-blue-400 text-xs font-mono hover:text-white transition-colors border-b border-blue-400/30 pb-0.5"
-                  >
-                    Copy My ID: {currentUser.email}
-                  </button>
+      <div className="grid gap-4">
+          <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider ml-2">Trusted Contacts ({currentUser.guardians.length})</h3>
+          {currentUser.guardians.length === 0 ? (
+              <div className="text-center py-12 bg-white/5 rounded-3xl border border-dashed border-white/10">
+                  <span className="text-4xl block mb-2 opacity-50">👥</span>
+                  <p className="text-gray-400 text-sm">No guardians added yet.<br/>Add someone you trust above.</p>
               </div>
           ) : (
               <div className="grid gap-3">
-                  {guardianProfiles.map((g, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-zinc-900 p-4 rounded-2xl border border-zinc-800 hover:border-zinc-600 transition-all group">
+                  {currentUser.guardians.map(g => (
+                      <div key={g} className="flex justify-between items-center bg-card/60 backdrop-blur-sm p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group">
                           <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-full bg-gradient-to-b from-zinc-700 to-zinc-800 flex items-center justify-center text-white font-bold border border-zinc-600 shadow-inner text-lg">
-                                {g.name ? g.name[0].toUpperCase() : '?'}
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
+                                {g[0].toUpperCase()}
                               </div>
                               <div>
-                                  <div className="text-white font-bold text-sm">{g.name}</div>
-                                  <div className="text-[10px] text-zinc-500 font-mono">{g.email}</div>
+                                  <div className="text-gray-200 font-medium">{g}</div>
+                                  <div className="text-xs text-green-400 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                                    Active
+                                  </div>
                               </div>
                           </div>
-                          
-                          <div className="flex items-center gap-3">
-                              <span className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_8px_#22c55e]"></span>
-                              <button 
-                                onClick={() => removeGuardian(g.email)}
-                                className="text-zinc-600 hover:text-red-400 transition-colors"
-                                title="Remove"
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                                </svg>
-                              </button>
-                          </div>
+                          <button 
+                            onClick={() => removeGuardian(g)}
+                            className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                            title="Remove Guardian"
+                          >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.49 1.478 47.4 47.4 0 00-15.28 0 .75.75 0 01-.49-1.478 48.809 48.809 0 013.876-.512v-.227c0-1.005.81-1.847 1.819-1.936.85-.075 1.706-.115 2.568-.115.862 0 1.718.04 2.568.115 1.01.089 1.819.93 1.819 1.936zm-3.75 2.5a.75.75 0 00-1.5 0v7a.75.75 0 001.5 0v-7z" clipRule="evenodd" />
+                              </svg>
+                          </button>
                       </div>
                   ))}
               </div>

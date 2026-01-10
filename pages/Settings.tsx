@@ -4,10 +4,9 @@ import { User } from '../types';
 
 interface SettingsProps {
   currentUser: User;
-  onUpdateUser: (user: User) => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateUser }) => {
+const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
   const [phrase, setPhrase] = useState(currentUser.dangerPhrase);
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
@@ -20,7 +19,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateUser }) => {
     setSaving(true);
     const updated = { ...currentUser, dangerPhrase: phrase };
     await updateUser(updated);
-    onUpdateUser(updated); // Update app state immediately
     setMsg("Settings saved successfully.");
     setSaving(false);
     setTimeout(() => setMsg(''), 3000);
@@ -43,7 +41,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateUser }) => {
                 className="w-full bg-slate-900/50 border border-white/10 rounded-xl p-4 pl-12 text-white text-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-600"
                 value={phrase}
                 onChange={e => setPhrase(e.target.value)}
-                placeholder="e.g. Help"
+                placeholder="e.g. Help me now"
               />
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
                 🎤
@@ -51,7 +49,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateUser }) => {
           </div>
           <p className="text-xs text-gray-500 mt-3 leading-relaxed">
             The system continuously monitors for this phrase when "Active Shield" is enabled. 
-            Default is <strong>"help"</strong>. Choose a phrase that is natural to say in an emergency.
+            Choose a phrase that is unique but natural to say in an emergency.
           </p>
       </div>
 
