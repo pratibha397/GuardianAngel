@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import GuardianService from '../pages/Guardians';
 import { getNearbyStations } from '../services/gemini';
-import GuardianService from '../services/guardian';
 import { updateLiveLocation } from '../services/storage';
 import { PlaceResult, User } from '../types';
 
