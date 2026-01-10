@@ -67,7 +67,6 @@ export const getCurrentUser = (): User | null => {
   if (!stored) return null;
   
   const user = JSON.parse(stored);
-  // FIX: Ensure guardians array exists (Firebase might drop empty arrays)
   if (!user.guardians) user.guardians = [];
   return user;
 };
@@ -95,12 +94,14 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
   saveLocalUser(newUser);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
 
-  // 3. Save to Firebase (Critical: Await this to ensure other users can find this user)
-  try {
-      const userRef = ref(db, `users/${sanitizedEmail}`);
-      await set(userRef, newUser);
-  } catch (e) {
-      console.error("Firebase registration failed:", e);
+  // 3. Save to Firebase
+  if (db) {
+    try {
+        const userRef = ref(db, `users/${sanitizedEmail}`);
+        await set(userRef, newUser);
+    } catch (e) {
+        console.error("Firebase registration failed:", e);
+    }
   }
 
   return newUser;
@@ -114,28 +115,29 @@ export const loginUser = async (email: string, password: string): Promise<User |
   const localUser = localUsers[sanitizedEmail];
   
   if (localUser && localUser.password === password) {
-      if (!localUser.guardians) localUser.guardians = []; // Safe check
+      if (!localUser.guardians) localUser.guardians = [];
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(localUser));
       return localUser;
   }
 
   // 2. Remote Check
-  try {
-    const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
-    
-    if (snapshot.exists()) {
-      const user = snapshot.val() as User;
-      if (user.password === password) {
-        // FIX: Ensure guardians array exists
-        if (!user.guardians) user.guardians = [];
+  if (db) {
+      try {
+        const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
         
-        saveLocalUser(user);
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-        return user;
+        if (snapshot.exists()) {
+          const user = snapshot.val() as User;
+          if (user.password === password) {
+            if (!user.guardians) user.guardians = [];
+            
+            saveLocalUser(user);
+            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+            return user;
+          }
+        }
+      } catch (e) {
+          console.warn("Remote login check failed:", e);
       }
-    }
-  } catch (e) {
-      console.warn("Remote login check failed:", e);
   }
 
   return null;
@@ -149,43 +151,44 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   saveLocalUser(updatedUser);
 
   // 2. Update Firebase
-  try {
-      await update(ref(db, `users/${sanitizedEmail}`), updatedUser);
-  } catch (e) {
-      console.error("Background update failed:", e);
+  if (db) {
+      try {
+          await update(ref(db, `users/${sanitizedEmail}`), updatedUser);
+      } catch (e) {
+          console.error("Background update failed:", e);
+      }
   }
 };
 
-// Direct Database Lookup for Guardian Adding
 export const findUserByEmail = async (email: string): Promise<User | null> => {
     const sanitizedEmail = sanitize(email);
-    try {
-        const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
-        if (snapshot.exists()) {
-            const user = snapshot.val() as User;
-            // FIX: Ensure guardians array exists
-            if (!user.guardians) user.guardians = [];
-            return user;
-        } else {
-            console.log(`User ${sanitizedEmail} not found in DB`);
+    if (db) {
+        try {
+            const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
+            if (snapshot.exists()) {
+                const user = snapshot.val() as User;
+                if (!user.guardians) user.guardians = [];
+                return user;
+            }
+        } catch (e) {
+            console.error("Error finding user in database:", e);
         }
-    } catch (e) {
-        console.error("Error finding user in database:", e);
     }
     return null;
 };
 
 export const getUsers = async (): Promise<User[]> => {
   const localUsers = Object.values(getLocalUsers());
-  try {
-      const snapshot = await get(child(ref(db), 'users'));
-      if (snapshot.exists()) {
-          const remoteUsers = Object.values(snapshot.val()) as User[];
-          // Fix arrays for remote users too
-          remoteUsers.forEach(u => { if (!u.guardians) u.guardians = []; });
-          return remoteUsers;
-      }
-  } catch {}
+  if (db) {
+      try {
+          const snapshot = await get(child(ref(db), 'users'));
+          if (snapshot.exists()) {
+              const remoteUsers = Object.values(snapshot.val()) as User[];
+              remoteUsers.forEach(u => { if (!u.guardians) u.guardians = []; });
+              return remoteUsers;
+          }
+      } catch {}
+  }
   return localUsers;
 };
 
@@ -203,37 +206,42 @@ export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>) => {
 
   saveLocalMessage(chatId, newMessage);
 
-  const messagesRef = ref(db, `messages/${chatId}`);
-  const newMessageRef = push(messagesRef);
-  set(newMessageRef, { ...newMessage, id: newMessageRef.key! }).catch(e => 
-      console.warn("Background message send failed:", e)
-  );
+  if (db) {
+      const messagesRef = ref(db, `messages/${chatId}`);
+      const newMessageRef = push(messagesRef);
+      set(newMessageRef, { ...newMessage, id: newMessageRef.key! }).catch(e => 
+          console.warn("Background message send failed:", e)
+      );
+  }
 };
 
 export const subscribeToMessages = (user1Email: string, user2Email: string, callback: (msgs: Message[]) => void) => {
   const chatId = getChatId(user1Email, user2Email);
-  const messagesRef = ref(db, `messages/${chatId}`);
   
   const initialLocal = getLocalMessages(chatId);
   if (initialLocal.length > 0) {
       callback(initialLocal.sort((a, b) => a.timestamp - b.timestamp));
   }
 
-  const unsubscribe = onValue(messagesRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const loadedMessages = Object.values(data) as Message[];
-      loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
-      
-      const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
-      all[chatId] = loadedMessages;
-      localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
+  if (db) {
+      const messagesRef = ref(db, `messages/${chatId}`);
+      const unsubscribe = onValue(messagesRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          const loadedMessages = Object.values(data) as Message[];
+          loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
+          
+          const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
+          all[chatId] = loadedMessages;
+          localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
 
-      callback(loadedMessages);
-    }
-  });
+          callback(loadedMessages);
+        }
+      });
+      return () => off(messagesRef);
+  }
 
-  return () => off(messagesRef);
+  return () => {};
 };
 
 export const deleteConversation = async (user1Email: string, user2Email: string) => {
@@ -243,7 +251,9 @@ export const deleteConversation = async (user1Email: string, user2Email: string)
   delete all[chatId];
   localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
 
-  remove(ref(db, `messages/${chatId}`)).catch(e => console.warn(e));
+  if (db) {
+      remove(ref(db, `messages/${chatId}`)).catch(e => console.warn(e));
+  }
 };
 
 // --- Alert System ---
@@ -261,54 +271,65 @@ export const sendAlert = async (senderEmail: string, receiverEmail: string, reas
         acknowledged: false
     };
     
-    const recipientKey = sanitize(receiverEmail);
     saveLocalAlert(receiverEmail, alert);
 
-    const alertsRef = ref(db, `alerts/${recipientKey}`);
-    const newAlertRef = push(alertsRef);
-    await set(newAlertRef, alert);
+    if (db) {
+        const recipientKey = sanitize(receiverEmail);
+        const alertsRef = ref(db, `alerts/${recipientKey}`);
+        const newAlertRef = push(alertsRef);
+        await set(newAlertRef, alert);
+    }
 };
 
 export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[]) => void) => {
-    const userKey = sanitize(userEmail);
-    const alertsRef = ref(db, `alerts/${userKey}`);
-    
-    const unsubscribe = onValue(alertsRef, (snapshot) => {
-        if (snapshot.exists()) {
-            const data = snapshot.val();
-            const alerts = Object.values(data) as Alert[];
-            callback(alerts);
-        } else {
-            callback([]);
-        }
-    });
-
-    return () => off(alertsRef);
+    // If no DB, we can try to check local storage occasionally, 
+    // but for now alerts are primarily real-time.
+    if (db) {
+        const userKey = sanitize(userEmail);
+        const alertsRef = ref(db, `alerts/${userKey}`);
+        
+        const unsubscribe = onValue(alertsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const alerts = Object.values(data) as Alert[];
+                callback(alerts);
+            } else {
+                callback([]);
+            }
+        });
+        return () => off(alertsRef);
+    }
+    return () => {};
 };
 
 // --- REAL-TIME LOCATION SHARING ---
 
 export const updateLiveLocation = async (email: string, lat: number, lng: number) => {
-    const userKey = sanitize(email);
-    const locationRef = ref(db, `locations/${userKey}`);
-    await set(locationRef, {
-        lat,
-        lng,
-        timestamp: Date.now()
-    }).catch(e => console.warn("Location update failed", e));
+    if (db) {
+        const userKey = sanitize(email);
+        const locationRef = ref(db, `locations/${userKey}`);
+        await set(locationRef, {
+            lat,
+            lng,
+            timestamp: Date.now()
+        }).catch(e => console.warn("Location update failed", e));
+    }
 };
 
 export const subscribeToLiveLocation = (email: string, callback: (loc: { lat: number, lng: number, timestamp: number } | null) => void) => {
-    const userKey = sanitize(email);
-    const locationRef = ref(db, `locations/${userKey}`);
-    
-    const unsubscribe = onValue(locationRef, (snapshot) => {
-        if (snapshot.exists()) {
-            callback(snapshot.val());
-        } else {
-            callback(null);
-        }
-    });
+    if (db) {
+        const userKey = sanitize(email);
+        const locationRef = ref(db, `locations/${userKey}`);
+        
+        const unsubscribe = onValue(locationRef, (snapshot) => {
+            if (snapshot.exists()) {
+                callback(snapshot.val());
+            } else {
+                callback(null);
+            }
+        });
 
-    return () => off(locationRef);
+        return () => off(locationRef);
+    }
+    return () => {};
 };

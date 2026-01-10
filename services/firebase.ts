@@ -1,31 +1,45 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase } from 'firebase/database';
+import { Database, getDatabase } from 'firebase/database';
 
-// --- FIREBASE CONFIGURATION ---
-// Configuration is loaded from environment variables (.env.local)
-// Do not commit secrets to GitHub.
-
+// Helper to safely access env vars in various environments (Vite, Webpack, etc.)
+// Bundlers often require explicit access to process.env.VAR_NAME for replacement to work.
 const getEnv = (key: string): string => {
+  let val = '';
+  
+  // 1. Try Vite's import.meta.env (if available)
   try {
-    // 1. Check process.env (Standard Node/Webpack/CRA)
-    if (typeof process !== 'undefined' && process.env && process.env[key]) {
-      return process.env[key]!;
+    // @ts-ignore
+    if (import.meta && import.meta.env) {
+      // @ts-ignore
+      val = import.meta.env[`VITE_${key}`] || import.meta.env[key];
     }
-    // 2. Check window.process.env (Our index.html polyfill)
-    if ((window as any).process?.env?.[key]) {
-        return (window as any).process.env[key];
+  } catch (e) {}
+  if (val) return val;
+
+  // 2. Try process.env (Standard) - We must handle potential ReferenceError
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      // We check multiple common prefixes
+      val = process.env[key] || 
+            process.env[`VITE_${key}`] || 
+            process.env[`REACT_APP_${key}`] || 
+            '';
     }
-    // 3. Fallback for Vite (import.meta.env) - accessed safely to avoid TS errors in non-Vite envs
-    // Note: If using Vite, variables usually must start with VITE_
-    // const meta = (import.meta as any).env;
-    // if (meta && meta[key]) return meta[key];
-  } catch (e) {
-    return "";
-  }
-  return "";
+  } catch (e) {}
+  if (val) return val;
+
+  // 3. Fallback to window polyfill (from index.html)
+  try {
+    if ((window as any).process?.env) {
+      val = (window as any).process.env[key] || '';
+    }
+  } catch (e) {}
+
+  return val;
 };
 
-const firebaseConfig = {
+// Explicitly construct config to allow bundlers to see usage
+const rawConfig = {
   apiKey: getEnv("FIREBASE_API_KEY"),
   authDomain: getEnv("FIREBASE_AUTH_DOMAIN"),
   databaseURL: getEnv("FIREBASE_DB_URL"),
@@ -35,24 +49,25 @@ const firebaseConfig = {
   appId: getEnv("FIREBASE_APP_ID")
 };
 
-// Robust validation
-const isConfigMissing = !firebaseConfig.apiKey || !firebaseConfig.databaseURL;
+// Filter out empty keys to prevent Firebase errors
+const firebaseConfig = Object.fromEntries(
+  Object.entries(rawConfig).filter(([_, v]) => !!v)
+);
 
-if (isConfigMissing) {
-  console.warn(
-    "%c FIREBASE CONFIG MISSING ", 
-    "background: red; color: white; font-weight: bold; padding: 4px; font-size: 14px;",
-    "\n\nCould not find Firebase environment variables.\nPlease create a '.env.local' file in your root directory with keys: FIREBASE_API_KEY, FIREBASE_DB_URL, etc.\n"
-  );
+let dbInstance: Database | null = null;
+
+// Only initialize if we have a valid database URL (prevents the Fatal Error)
+if (firebaseConfig.databaseURL && firebaseConfig.databaseURL.startsWith('http')) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    dbInstance = getDatabase(app);
+    console.log("Firebase connected successfully");
+  } catch (e) {
+    console.error("Firebase Initialization Failed:", e);
+  }
+} else {
+  console.warn("Firebase Database URL missing or invalid. App running in LocalStorage-only mode.");
 }
 
-// Initialize app (or allow crash if critical config missing to alert developer)
-// We wrap in try/catch to prevent white-screen of death if config is totally malformed
-let app;
-try {
-    app = initializeApp(firebaseConfig);
-} catch (e) {
-    console.error("Firebase Initialization Error:", e);
-}
-
-export const db = app ? getDatabase(app) : {} as any;
+// Export db as nullable. Consumers must check existence.
+export const db = dbInstance;
