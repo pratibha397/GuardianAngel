@@ -20,7 +20,6 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
     const fetchNames = async () => {
         const details: Record<string, {name: string, email: string}> = {};
         for (const email of guardianList) {
-            // Check cache first to avoid flickering
             if (guardianDetails[email]) {
                 details[email] = guardianDetails[email];
                 continue;
@@ -66,12 +65,19 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
             return;
         }
 
+        // Successfully fetched target user with NAME
         const updatedUser = {
             ...currentUser,
             guardians: [...guardianList, targetUser.email]
         };
         
         onUserUpdated(updatedUser);
+        
+        // Immediate UI Update for Name
+        setGuardianDetails(prev => ({
+            ...prev,
+            [targetUser.email]: { name: targetUser.name, email: targetUser.email }
+        }));
 
         setEmailInput('');
         setMsg(`Success! Added ${targetUser.name}.`);

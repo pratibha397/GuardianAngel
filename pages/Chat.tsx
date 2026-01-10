@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { deleteConversation, getUsers, sendMessage, subscribeToMessages } from '../services/storage';
+import { deleteConversation, findUserByEmail, getUsers, sendMessage, subscribeToMessages } from '../services/storage';
 import { Message, User } from '../types';
 
 interface ChatProps {
@@ -8,12 +8,14 @@ interface ChatProps {
 
 const Chat: React.FC<ChatProps> = ({ currentUser }) => {
   const [selectedGuardian, setSelectedGuardian] = useState<string | null>(null);
+  const [selectedGuardianName, setSelectedGuardianName] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [contacts, setContacts] = useState<string[]>([]);
+  const [contacts, setContacts] = useState<{email: string, name: string}[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -22,13 +24,40 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
   useEffect(() => {
     const fetchContacts = async () => {
       setLoadingContacts(true);
-      const allUsers = await getUsers();
-      const uniqueContacts = Array.from(new Set([
-          ...currentUser.guardians,
-          ...allUsers.filter(u => u.guardians && u.guardians.includes(currentUser.email)).map(u => u.email)
-      ]));
-      setContacts(uniqueContacts);
-      setLoadingContacts(false);
+      try {
+        const allUsers = await getUsers();
+        
+        // Find users that are either in my guardians list OR have me in their guardians list
+        // Note: This relies on fetching all users, which is fine for a demo but not scalable for production.
+        const relevantEmails = new Set<string>();
+        
+        // Add my guardians
+        if (currentUser.guardians) {
+            currentUser.guardians.forEach(g => relevantEmails.add(g));
+        }
+
+        // Add people who guard me (reverse lookup)
+        allUsers.forEach(u => {
+            if (u.guardians && u.guardians.includes(currentUser.email)) {
+                relevantEmails.add(u.email);
+            }
+        });
+
+        const contactList: {email: string, name: string}[] = [];
+        for (const email of Array.from(relevantEmails)) {
+            const user = await findUserByEmail(email);
+            contactList.push({
+                email: email,
+                name: user ? user.name : email.split('@')[0]
+            });
+        }
+        
+        setContacts(contactList);
+      } catch (e) {
+          console.error("Error fetching contacts", e);
+      } finally {
+        setLoadingContacts(false);
+      }
     };
     fetchContacts();
   }, [currentUser]);
@@ -36,22 +65,38 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
   // Subscribe to messages
   useEffect(() => {
     if (selectedGuardian) {
+      setMessages([]); // Clear previous messages while loading
       const unsubscribe = subscribeToMessages(currentUser.email, selectedGuardian, (msgs) => {
         setMessages(msgs);
       });
-      return () => unsubscribe();
+      
+      // Update name for header
+      const contact = contacts.find(c => c.email === selectedGuardian);
+      setSelectedGuardianName(contact ? contact.name : selectedGuardian);
+
+      return () => {
+          unsubscribe(); // Cleanup listener on unmount or switch
+      };
     }
-  }, [selectedGuardian, currentUser.email]);
+  }, [selectedGuardian, currentUser.email, contacts]);
 
   const handleSend = async () => {
     if (!inputText.trim() || !selectedGuardian) return;
     const text = inputText;
     setInputText(''); 
-    await sendMessage({
-        senderEmail: currentUser.email,
-        receiverEmail: selectedGuardian,
-        text: text
-    });
+    
+    try {
+        await sendMessage({
+            senderEmail: currentUser.email,
+            receiverEmail: selectedGuardian,
+            text: text
+        });
+        // Optimistic update not needed as Firebase listener triggers immediately
+    } catch (e) {
+        console.error("Failed to send", e);
+        alert("Failed to send message. Check connection.");
+        setInputText(text); // Restore text
+    }
   };
 
   const sendLocation = async () => {
@@ -91,20 +136,21 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
                      <div className="text-center py-12 bg-white/5 rounded-3xl border border-dashed border-white/10 mx-2">
                         <span className="text-4xl block mb-2 opacity-50">📭</span>
                         <p className="text-gray-400 text-sm">No conversations yet.</p>
+                        <p className="text-gray-500 text-xs mt-2">Add a guardian to start chatting.</p>
                     </div>
                 )}
                 {contacts.map(c => (
                     <button 
-                        key={c}
-                        onClick={() => setSelectedGuardian(c)}
+                        key={c.email}
+                        onClick={() => setSelectedGuardian(c.email)}
                         className="w-full text-left p-4 bg-card/60 hover:bg-card/80 backdrop-blur-md rounded-2xl border border-white/5 flex items-center gap-4 transition-all hover:scale-[1.02] active:scale-[0.98]"
                     >
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center text-white font-bold shadow-lg">
-                            {c[0].toUpperCase()}
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center text-white font-bold shadow-lg shrink-0">
+                            {c.name[0]?.toUpperCase()}
                         </div>
-                        <div>
-                            <div className="text-gray-100 font-semibold">{c}</div>
-                            <div className="text-xs text-gray-500">Tap to chat</div>
+                        <div className="overflow-hidden">
+                            <div className="text-gray-100 font-semibold truncate">{c.name}</div>
+                            <div className="text-xs text-gray-500 truncate">{c.email}</div>
                         </div>
                     </button>
                 ))}
@@ -117,7 +163,7 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
     <div className="flex flex-col h-[calc(100vh-140px)] bg-black/20 backdrop-blur-xl rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
         {/* Chat Header */}
         <div className="p-4 bg-white/5 border-b border-white/5 flex justify-between items-center backdrop-blur-md z-10">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 overflow-hidden">
                 <button 
                     onClick={() => setSelectedGuardian(null)} 
                     className="p-2 -ml-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-full transition-colors"
@@ -126,15 +172,15 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
                         <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
                     </svg>
                 </button>
-                <div className="flex flex-col">
-                    <span className="text-white font-bold text-sm">{selectedGuardian}</span>
+                <div className="flex flex-col overflow-hidden">
+                    <span className="text-white font-bold text-sm truncate">{selectedGuardianName}</span>
                     <span className="text-[10px] text-green-400 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
-                        Secure Line
+                        Live
                     </span>
                 </div>
             </div>
-            <button onClick={handleDelete} className="p-2 text-red-400 hover:bg-red-500/10 rounded-full transition-colors" title="Delete Conversation">
+            <button onClick={handleDelete} className="p-2 text-red-400 hover:bg-red-500/10 rounded-full transition-colors shrink-0" title="Delete Conversation">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
                     <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
                 </svg>
@@ -143,11 +189,16 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
         
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-dark/50 to-black/50 no-scrollbar">
+            {messages.length === 0 && (
+                <div className="text-center text-gray-500 mt-10 text-sm">
+                    No messages yet. Say hello!
+                </div>
+            )}
             {messages.map(m => {
                 const isMe = m.senderEmail === currentUser.email;
                 return (
                     <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-                        <div className={`max-w-[80%] p-4 rounded-2xl shadow-lg relative ${isMe ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-tr-none' : 'bg-slate-800 text-gray-200 rounded-tl-none border border-white/5'}`}>
+                        <div className={`max-w-[80%] p-3 px-4 rounded-2xl shadow-lg relative ${isMe ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-tr-none' : 'bg-slate-800 text-gray-200 rounded-tl-none border border-white/5'}`}>
                             {m.isLocation ? (
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider opacity-90">
@@ -166,9 +217,9 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
                                     </div>
                                 </div>
                             ) : (
-                                <p className="leading-relaxed text-sm">{m.text}</p>
+                                <p className="leading-relaxed text-sm break-words">{m.text}</p>
                             )}
-                            <span className={`text-[10px] block text-right mt-1 ${isMe ? 'text-blue-200' : 'text-gray-500'}`}>
+                            <span className={`text-[9px] block text-right mt-1 opacity-70`}>
                                 {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
                         </div>
