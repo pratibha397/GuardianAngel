@@ -8,7 +8,7 @@ const getClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
-// --- Live Audio Monitoring ---
+// --- Live Audio Monitoring (Unchanged) ---
 export const startLiveMonitoring = async (
   dangerPhrase: string,
   onDangerDetected: (reason: string) => void,
@@ -25,9 +25,7 @@ export const startLiveMonitoring = async (
     Otherwise, transcribe briefly.
   `;
 
-  let session: any = null;
-
-  const sessionPromise = ai.live.connect({
+  let sessionPromise = ai.live.connect({
     model: 'gemini-2.5-flash-native-audio-preview-12-2025',
     callbacks: {
       onopen: () => {
@@ -84,17 +82,18 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-// --- Nearby Places (Fixed for Reliability) ---
+// --- Nearby Places (Fixed) ---
 
 export const getNearbyStations = async (lat: number, lng: number): Promise<PlaceResult[]> => {
   const ai = getClient();
   
   try {
-    // Explicit prompt to force the tool to be used
+    // Highly specific prompt to ensure tool usage
     const prompt = `
-      Find exactly 5 nearby emergency services (Police Stations, Hospitals, Fire Stations).
-      Current location: ${lat}, ${lng}.
-      Use the Google Maps tool to find real places.
+      I am currently at latitude ${lat}, longitude ${lng}.
+      Find exactly 5 nearby emergency services.
+      Prioritize Police Stations, Hospitals, and Fire Stations.
+      Return their names and addresses using the Google Maps tool.
     `;
     
     const response = await ai.models.generateContent({
@@ -110,28 +109,36 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       }
     });
 
-    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    // Parsing Logic
     const places: PlaceResult[] = [];
+    const candidates = response.candidates || [];
     
-    // Iterate chunks to find map data
-    for (const chunk of chunks) {
-        if (chunk.maps) {
-            places.push({
-                title: chunk.maps.title || "Unknown Location",
-                uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
-                address: "Click to view details", // Gemini tool chunks often lack full address string, relying on URI
-                distance: "Nearby"
-            });
+    for (const candidate of candidates) {
+        const chunks = candidate.groundingMetadata?.groundingChunks || [];
+        for (const chunk of chunks) {
+            if (chunk.maps) {
+                places.push({
+                    title: chunk.maps.title || "Unknown Place",
+                    uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+                    address: "View details on map", // Metadata often doesn't have formatted address string, so we provide a link
+                    distance: "Nearby"
+                });
+            }
         }
     }
 
-    // Deduplicate based on title
-    const uniquePlaces = places.filter((p, i, a) => a.findIndex(t => t.title === p.title) === i);
-    
-    return uniquePlaces;
+    // Filter duplicates by title
+    const unique = places.filter((p, i, a) => a.findIndex(t => t.title === p.title) === i);
+    return unique.slice(0, 5); // Return max 5
 
   } catch (e) {
-    console.error("Gemini Maps Error:", e);
-    return [];
+    console.error("Gemini Maps Fetch Error:", e);
+    // Fallback if API fails: return generic search link
+    return [{
+        title: "Emergency Services Search",
+        uri: `https://www.google.com/maps/search/emergency+services/@${lat},${lng},14z`,
+        address: "Click to search manually on Google Maps",
+        distance: "Click to view"
+    }];
   }
 };
