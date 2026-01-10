@@ -113,7 +113,23 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
   const ai = getClient();
   
   try {
-    const prompt = "Find the nearest police stations, hospitals, and fire stations. Provide the Name, Address, and Distance for each. Format each entry strictly as: Name | Address | Distance";
+    const prompt = `
+      I am located at Latitude: ${lat}, Longitude: ${lng}.
+      
+      Please find the nearest Police Stations, Hospitals, and Fire Stations within a reasonable driving range.
+      List up to 15 relevant locations.
+      
+      CRITICAL OUTPUT FORMAT:
+      For each location found, output a single line using exactly this format:
+      PLACE: <Name> || <Address> || <Distance from me>
+      
+      Example:
+      PLACE: General Hospital || 123 Main St, New York || 0.8 miles
+      PLACE: FDNY Station 4 || 5th Avenue || 1.2 km
+      
+      If you cannot determine exact distance, put "Nearby".
+      Do not include intro text. Just the list.
+    `;
     
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -133,45 +149,54 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
 
     const text = response.text || "";
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    
     const places: PlaceResult[] = [];
-    const lines = text.split('\n');
     
+    // Looser regex to capture content between delimiters even if whitespace varies
+    const regex = /PLACE:\s*([^|]+)\s*\|\|\s*([^|]+)\s*\|\|\s*(.+)/i;
+    
+    const lines = text.split('\n');
+
     for (const line of lines) {
-        if (line.includes('|')) {
-            const parts = line.split('|').map(s => s.trim());
-            if (parts.length >= 2) {
-                const title = parts[0];
-                const address = parts[1];
-                const distance = parts[2] || "";
+        const cleanLine = line.replace(/^[\*\-\s]+/, ''); // Remove bullets
+        const match = cleanLine.match(regex);
+        
+        if (match) {
+            const title = match[1].trim();
+            const address = match[2].trim();
+            const distance = match[3].trim();
 
-                // Attempt to find a grounding chunk link
-                const chunk = chunks.find((c: any) => 
-                     c.web?.title && title.toLowerCase().includes(c.web.title.toLowerCase())
-                );
-                
-                // Use chunk URI if available, otherwise fallback to a search query
-                const uri = chunk?.web?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
+            // Try to find exact map metadata
+            const matchedChunk = chunks.find((c: any) => 
+                c.maps?.title && title.toLowerCase().includes(c.maps.title.toLowerCase())
+            );
+            
+            const uri = matchedChunk?.maps?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
 
-                places.push({ title, address, distance, uri });
-            }
+            places.push({ title, address, distance, uri });
         }
     }
 
-    // Fallback if parsing failed (e.g. model didn't follow format) and we have chunks
-    if (places.length === 0) {
-         chunks.forEach((chunk: any) => {
-            if (chunk.web?.uri && chunk.web?.title) {
+    // Fallback: If formatted parsing failed but we have chunks, use chunks directly
+    if (places.length === 0 && chunks.length > 0) {
+        chunks.forEach((chunk: any) => {
+            if (chunk.maps) {
                 places.push({
-                    title: chunk.web.title,
-                    uri: chunk.web.uri,
-                    // If fallback to chunks, we don't have address/distance easily
+                    title: chunk.maps.title,
+                    uri: chunk.maps.uri,
+                    address: "View on Map for details", 
+                    distance: "Nearby" 
                 });
             }
-         });
+        });
     }
+    
+    // Deduplicate
+    const uniquePlaces = places.filter((place, index, self) =>
+        index === self.findIndex((p) => p.title === place.title)
+    );
 
-    return places;
+    return uniquePlaces;
+
   } catch (e) {
     console.error("Error fetching nearby places:", e);
     return [];

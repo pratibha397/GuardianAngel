@@ -5,7 +5,7 @@ import Chat from './pages/Chat';
 import Dashboard from './pages/Dashboard';
 import Guardians from './pages/Guardians';
 import Settings from './pages/Settings';
-import { getCurrentUser, logoutUser, subscribeToAlerts } from './services/storage';
+import { getCurrentUser, logoutUser, subscribeToAlerts, updateUser } from './services/storage';
 import { Alert, AppRoute, User } from './types';
 
 const App: React.FC = () => {
@@ -63,8 +63,6 @@ const App: React.FC = () => {
   const handleAcknowledge = () => {
       stopAlarm();
       setIncomingAlert(null);
-      // In a real app, we would update the alert status in Firebase here
-      // But for now, local state clear is sufficient for the receiver UI
       if (incomingAlert) {
          setCurrentRoute(AppRoute.CHAT); // Go to chat to help
       }
@@ -81,6 +79,12 @@ const App: React.FC = () => {
     setCurrentRoute(AppRoute.AUTH);
   };
 
+  // NEW: Central handler to update user state and storage simultaneously
+  const handleUserUpdate = async (updatedUser: User) => {
+      setCurrentUser(updatedUser);
+      await updateUser(updatedUser);
+  };
+
   const renderContent = () => {
     if (!currentUser) return <Auth onLogin={handleLogin} />;
 
@@ -88,11 +92,11 @@ const App: React.FC = () => {
       case AppRoute.DASHBOARD:
         return <Dashboard currentUser={currentUser} />;
       case AppRoute.GUARDIANS:
-        return <Guardians currentUser={currentUser} />;
+        return <Guardians currentUser={currentUser} onUserUpdated={handleUserUpdate} />;
       case AppRoute.CHAT:
         return <Chat currentUser={currentUser} />;
       case AppRoute.SETTINGS:
-        return <Settings currentUser={currentUser} />;
+        return <Settings currentUser={currentUser} onUserUpdated={handleUserUpdate} />;
       default:
         return <Dashboard currentUser={currentUser} />;
     }
