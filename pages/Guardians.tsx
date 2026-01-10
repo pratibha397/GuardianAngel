@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { findUserByEmail, updateUser } from '../services/storage';
+import { getUsers, updateUser } from '../services/storage';
 import { User } from '../types';
 
 interface GuardiansProps {
@@ -10,13 +10,10 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
   const [emailInput, setEmailInput] = useState('');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  
-  // Safety check for legacy data
-  const guardianList = currentUser.guardians || [];
 
   const addGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (guardianList.includes(emailInput)) {
+    if (currentUser.guardians.includes(emailInput)) {
         setMsg("User is already a guardian.");
         return;
     }
@@ -25,8 +22,8 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
     setMsg('');
 
     try {
-        // Correctly lookup in the Realtime Database
-        const targetUser = await findUserByEmail(emailInput);
+        const allUsers = await getUsers();
+        const targetUser = allUsers.find(u => u.email === emailInput);
 
         if (!targetUser) {
             setMsg("User not found. They must register first.");
@@ -42,7 +39,7 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
 
         const updatedUser = {
             ...currentUser,
-            guardians: [...guardianList, emailInput]
+            guardians: [...currentUser.guardians, emailInput]
         };
         
         await updateUser(updatedUser);
@@ -50,7 +47,7 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
         setMsg("Guardian added successfully.");
     } catch (error) {
         console.error(error);
-        setMsg("Failed to add guardian. Check connection.");
+        setMsg("Failed to add guardian.");
     } finally {
         setLoading(false);
     }
@@ -61,7 +58,7 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
       
       const updatedUser = {
           ...currentUser,
-          guardians: guardianList.filter(g => g !== email)
+          guardians: currentUser.guardians.filter(g => g !== email)
       };
       await updateUser(updatedUser);
       window.location.reload(); 
@@ -102,15 +99,15 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
       </div>
 
       <div className="grid gap-4">
-          <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider ml-2">Trusted Contacts ({guardianList.length})</h3>
-          {guardianList.length === 0 ? (
+          <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider ml-2">Trusted Contacts ({currentUser.guardians.length})</h3>
+          {currentUser.guardians.length === 0 ? (
               <div className="text-center py-12 bg-white/5 rounded-3xl border border-dashed border-white/10">
                   <span className="text-4xl block mb-2 opacity-50">👥</span>
                   <p className="text-gray-400 text-sm">No guardians added yet.<br/>Add someone you trust above.</p>
               </div>
           ) : (
               <div className="grid gap-3">
-                  {guardianList.map(g => (
+                  {currentUser.guardians.map(g => (
                       <div key={g} className="flex justify-between items-center bg-card/60 backdrop-blur-sm p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group">
                           <div className="flex items-center gap-4">
                               <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
