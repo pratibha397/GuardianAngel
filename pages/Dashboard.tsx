@@ -22,31 +22,33 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
+    // Helper to send data to a specific guardian
+    const notifyGuardian = async (gEmail: string, lat?: number, lng?: number) => {
+        // 1. Send High Priority Alert (Triggers Alarm Sound)
+        await sendAlert(currentUser.email, gEmail, reason, lat, lng);
+        
+        // 2. Send Chat Message (Logs in 2-way comms & provides persistent map link)
+        await sendMessage({
+            senderEmail: currentUser.email,
+            receiverEmail: gEmail,
+            text: `🚨 SOS TRIGGERED: ${reason}`,
+            isLocation: !!(lat && lng),
+            lat: lat,
+            lng: lng
+        });
+    };
+
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((pos) => {
         const { latitude, longitude } = pos.coords;
-        currentUser.guardians.forEach(async (gEmail) => {
-           await sendMessage({
-             senderEmail: currentUser.email,
-             receiverEmail: gEmail,
-             text: `🚨 SOS! ALERT TRIGGERED: ${reason}`,
-             isLocation: true,
-             lat: latitude,
-             lng: longitude
-           });
-           await sendAlert(currentUser.email, gEmail, reason, latitude, longitude);
-        });
+        currentUser.guardians.forEach(gEmail => notifyGuardian(gEmail, latitude, longitude));
       }, (err) => {
            console.error("Geo error", err);
-           currentUser.guardians.forEach(async (gEmail) => {
-             await sendMessage({
-               senderEmail: currentUser.email,
-               receiverEmail: gEmail,
-               text: `🚨 SOS! ALERT TRIGGERED: ${reason} (Location Unavailable)`,
-             });
-             await sendAlert(currentUser.email, gEmail, reason);
-           });
+           currentUser.guardians.forEach(gEmail => notifyGuardian(gEmail));
       });
+    } else {
+        // Fallback for no geolocation support
+        currentUser.guardians.forEach(gEmail => notifyGuardian(gEmail));
     }
 
     if (isListening) toggleListening();

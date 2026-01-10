@@ -8,17 +8,6 @@ export interface User {
   isTracking?: boolean;
 }
 
-export interface Message {
-  id: string;
-  senderEmail: string;
-  receiverEmail: string;
-  text: string;
-  timestamp: number;
-  isLocation?: boolean;
-  lat?: number;
-  lng?: number;
-}
-
 export interface Alert {
   id: string;
   senderEmail: string;
@@ -28,6 +17,17 @@ export interface Alert {
   lat?: number;
   lng?: number;
   acknowledged?: boolean;
+}
+
+export interface Message {
+  id: string;
+  senderEmail: string;
+  receiverEmail: string;
+  text: string;
+  timestamp: number;
+  isLocation?: boolean;
+  lat?: number;
+  lng?: number;
 }
 
 export interface PlaceResult {

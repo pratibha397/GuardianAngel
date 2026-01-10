@@ -1,6 +1,6 @@
-import { get, off, onValue, push, ref, remove, set, update } from 'firebase/database';
-import { Alert, Message, User } from '../types';
+import { User, Alert, Message } from '../types';
 import { db } from './firebase';
+import { ref, set, get, push, onValue, update, remove } from 'firebase/database';
 
 const CURRENT_USER_KEY = 'guardian_current_user';
 
@@ -82,95 +82,6 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
     }
 };
 
-// --- Chat Logic (Guaranteed 2-Way) ---
-
-const getChatId = (email1: string, email2: string) => {
-  // Deterministic ID: alphabetically sorted emails joined by underscore
-  return [sanitize(email1), sanitize(email2)].sort().join('_');
-};
-
-export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>): Promise<void> => {
-  const chatId = getChatId(msg.senderEmail, msg.receiverEmail);
-  const messagesRef = ref(db, `messages/${chatId}`);
-  const newMessageRef = push(messagesRef);
-  
-  const payload: Message = { 
-      ...msg, 
-      id: newMessageRef.key!, 
-      timestamp: Date.now() 
-  };
-
-  // Write to network. Firebase SDK handles offline queuing automatically.
-  await set(newMessageRef, payload);
-};
-
-export const subscribeToMessages = (user1Email: string, user2Email: string, callback: (msgs: Message[]) => void) => {
-  const chatId = getChatId(user1Email, user2Email);
-  const messagesRef = ref(db, `messages/${chatId}`);
-  
-  // Real-time listener
-  const unsubscribe = onValue(messagesRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const loadedMessages = Object.values(data) as Message[];
-      // Sort by time
-      loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
-      callback(loadedMessages);
-    } else {
-      callback([]);
-    }
-  });
-
-  return () => off(messagesRef);
-};
-
-export const deleteConversation = async (user1Email: string, user2Email: string) => {
-  const chatId = getChatId(user1Email, user2Email);
-  await remove(ref(db, `messages/${chatId}`));
-};
-
-/**
- * Robust Contact Discovery:
- * Finds everyone I have added as a guardian AND everyone who has added me.
- */
-export const getChatContacts = async (currentUser: User): Promise<{email: string, name: string}[]> => {
-    const contactsMap = new Map<string, string>(); // Email -> Name
-
-    // 1. Add my guardians (Local knowledge)
-    for (const gEmail of currentUser.guardians || []) {
-        contactsMap.set(gEmail, gEmail.split('@')[0]); // Default name fallback
-    }
-
-    // 2. Network scan for people who added me
-    // We fetch all users to check their guardians list. 
-    // In a production app, we would use a reverse-index in DB, but for this scale, this is fine.
-    try {
-        const snapshot = await get(ref(db, 'users'));
-        if (snapshot.exists()) {
-            const allUsers = Object.values(snapshot.val()) as User[];
-            
-            // Populate names for my guardians if found
-            allUsers.forEach(u => {
-                if (contactsMap.has(u.email)) {
-                    contactsMap.set(u.email, u.name);
-                }
-            });
-
-            // Find users who have ME as a guardian
-            allUsers.forEach(u => {
-                if (u.guardians && u.guardians.includes(currentUser.email)) {
-                    contactsMap.set(u.email, u.name);
-                }
-            });
-        }
-    } catch (e) {
-        console.error("Error fetching contacts", e);
-    }
-
-    // Convert map to array
-    return Array.from(contactsMap.entries()).map(([email, name]) => ({ email, name }));
-};
-
 // --- Alert Logic (Real-time) ---
 
 export const sendAlert = async (senderEmail: string, receiverEmail: string, reason: string, lat?: number, lng?: number) => {
@@ -202,4 +113,75 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
             callback([]);
         }
     });
+};
+
+// --- Chat Logic ---
+
+const getConversationId = (email1: string, email2: string) => {
+    return [sanitize(email1), sanitize(email2)].sort().join('_');
+};
+
+export const getChatContacts = async (currentUser: User): Promise<{email: string, name: string}[]> => {
+    const contactsMap = new Map<string, {email: string, name: string}>();
+    
+    // 1. Add my guardians
+    for (const gEmail of currentUser.guardians || []) {
+        const user = await findUserByEmail(gEmail);
+        if (user) contactsMap.set(gEmail, { email: user.email, name: user.name });
+        else contactsMap.set(gEmail, { email: gEmail, name: 'Unknown' });
+    }
+
+    // 2. Add people who possess me as a guardian (reverse lookup)
+    try {
+        const snapshot = await get(ref(db, 'users'));
+        if (snapshot.exists()) {
+            snapshot.forEach((child) => {
+                const user = child.val() as User;
+                // Check if I am in their guardians list
+                if (user.guardians && Array.isArray(user.guardians) && user.guardians.includes(currentUser.email)) {
+                     contactsMap.set(user.email, { email: user.email, name: user.name });
+                }
+            });
+        }
+    } catch (e) {
+        console.error("Error fetching chat contacts", e);
+    }
+
+    return Array.from(contactsMap.values());
+};
+
+export const sendMessage = async (message: Omit<Message, 'id' | 'timestamp'>) => {
+    const conversationId = getConversationId(message.senderEmail, message.receiverEmail);
+    const chatRef = ref(db, `chats/${conversationId}`);
+    const msgRef = push(chatRef);
+    
+    const newMessage: Message = {
+        ...message,
+        id: msgRef.key as string,
+        timestamp: Date.now()
+    };
+    
+    await set(msgRef, newMessage);
+};
+
+export const subscribeToMessages = (userEmail: string, otherEmail: string, callback: (msgs: Message[]) => void) => {
+    const conversationId = getConversationId(userEmail, otherEmail);
+    const chatRef = ref(db, `chats/${conversationId}`);
+    
+    return onValue(chatRef, (snapshot) => {
+        if (snapshot.exists()) {
+            const val = snapshot.val();
+            const msgs = Object.values(val) as Message[];
+            // Sort by timestamp
+            msgs.sort((a, b) => a.timestamp - b.timestamp);
+            callback(msgs);
+        } else {
+            callback([]);
+        }
+    });
+};
+
+export const deleteConversation = async (userEmail: string, otherEmail: string) => {
+    const conversationId = getConversationId(userEmail, otherEmail);
+    await remove(ref(db, `chats/${conversationId}`));
 };
