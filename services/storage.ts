@@ -8,7 +8,8 @@ const MESSAGES_STORAGE_KEY = 'guardian_messages_backup';
 const ALERTS_STORAGE_KEY = 'guardian_alerts_backup';
 
 // Helper to sanitize email for Firebase paths (cannot contain '.')
-const sanitize = (email: string) => email.replace(/\./g, '_');
+// CRITICAL: Always lowercase to ensure consistency across devices/inputs
+const sanitize = (email: string) => email.toLowerCase().replace(/\./g, '_');
 
 // Polyfill for randomUUID
 const generateId = () => {
@@ -62,7 +63,7 @@ const saveLocalAlert = (recipientEmail: string, alert: Alert) => {
 
 
 // Helper: Run promise with short timeout to prevent UI blocking on slow network
-const withTimeout = <T>(promise: Promise<T>, ms: number = 1500): Promise<T> => {
+const withTimeout = <T>(promise: Promise<T>, ms: number = 2500): Promise<T> => {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Firebase Operation Timeout")), ms);
         promise.then(
@@ -89,6 +90,7 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
   const sanitizedEmail = sanitize(user.email);
   const newUser: User = {
     ...user,
+    email: user.email.toLowerCase(), // Store normalized email
     id: generateId(),
     guardians: [],
     dangerPhrase: 'help me now'
@@ -165,15 +167,22 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
 export const findUserByEmail = async (email: string): Promise<User | null> => {
     const sanitizedEmail = sanitize(email);
     try {
-        // Try local first
+        // Try Remote First for most up-to-date data (e.g. name changes)
+        // Only use local if remote fails
+        try {
+            const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
+            if (snapshot.exists()) {
+                const u = snapshot.val() as User;
+                saveLocalUser(u); // Cache it
+                return u;
+            }
+        } catch (e) {
+            // Fallback to local
+        }
+        
         const local = getLocalUsers()[sanitizedEmail];
         if (local) return local;
 
-        // Try Remote
-        const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
-        if (snapshot.exists()) {
-            return snapshot.val() as User;
-        }
     } catch (e) {
         console.error("Lookup failed", e);
     }
@@ -181,20 +190,23 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
 };
 
 export const getUsers = async (): Promise<User[]> => {
-  const localUsers = Object.values(getLocalUsers());
+  // Try remote fetch
   try {
-      withTimeout(get(child(ref(db), 'users')), 1000).then(snapshot => {
-          if (snapshot.exists()) {
-             // Just cache for next time, don't block
-          }
-      }).catch(() => {});
+      const snapshot = await withTimeout(get(child(ref(db), 'users')), 1500);
+      if (snapshot.exists()) {
+          const usersObj = snapshot.val();
+          return Object.values(usersObj);
+      }
   } catch {}
-  return localUsers;
+  
+  // Fallback local
+  return Object.values(getLocalUsers());
 };
 
 // --- Chat Management ---
 
 const getChatId = (email1: string, email2: string) => {
+  // Sort alphabetically to ensure same ID regardless of sender/receiver order
   return [sanitize(email1), sanitize(email2)].sort().join('_');
 };
 
@@ -218,13 +230,12 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
   const messagesRef = ref(db, `messages/${chatId}`);
   
   let unsubscribeFirebase: any;
-  let localInterval: any;
 
+  // Initial Load (Local)
   const initialLocal = getLocalMessages(chatId);
-  if (initialLocal.length > 0) {
-      callback(initialLocal.sort((a, b) => a.timestamp - b.timestamp));
-  }
+  callback(initialLocal.sort((a, b) => a.timestamp - b.timestamp));
 
+  // Subscribe Remote
   try {
       unsubscribeFirebase = onValue(messagesRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -232,30 +243,20 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
           const loadedMessages = Object.values(data) as Message[];
           loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
           
+          // Update Cache
           const all = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY) || '{}');
           all[chatId] = loadedMessages;
           localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(all));
 
           callback(loadedMessages);
         }
-      }, (error) => {
-          if (!localInterval) startLocalPolling();
       });
   } catch (e) {
-      if (!localInterval) startLocalPolling();
-  }
-
-  function startLocalPolling() {
-      if (localInterval) return;
-      localInterval = setInterval(() => {
-          const updated = getLocalMessages(chatId);
-          callback(updated.sort((a, b) => a.timestamp - b.timestamp));
-      }, 1000);
+      console.error("Firebase chat subscription failed", e);
   }
 
   return () => {
     if (unsubscribeFirebase) off(messagesRef);
-    if (localInterval) clearInterval(localInterval);
   };
 };
 
@@ -283,7 +284,10 @@ export const sendAlert = async (senderEmail: string, receiverEmail: string, reas
     };
     
     const recipientKey = sanitize(receiverEmail);
-    saveLocalAlert(receiverEmail, alert);
+    // Optimistic Local Save (if sending to self? Unlikely but good practice)
+    if (sanitize(senderEmail) === recipientKey) {
+        saveLocalAlert(receiverEmail, alert);
+    }
 
     const alertsRef = ref(db, `alerts/${recipientKey}`);
     const newAlertRef = push(alertsRef);
@@ -294,6 +298,8 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
     const userKey = sanitize(userEmail);
     const alertsRef = ref(db, `alerts/${userKey}`);
     
+    console.log("Subscribing to alerts for:", userKey);
+    
     let unsubscribe: any;
     
     try {
@@ -301,6 +307,7 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 const alerts = Object.values(data) as Alert[];
+                console.log("Alerts received:", alerts.length);
                 callback(alerts);
             } else {
                 callback([]);
@@ -310,13 +317,7 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
         console.warn("Alert subscription failed", e);
     }
     
-    const interval = setInterval(() => {
-        const local = getLocalAlerts(userEmail);
-        if (local.length > 0) callback(local);
-    }, 2000);
-
     return () => {
         if (unsubscribe) off(alertsRef);
-        clearInterval(interval);
     };
 };

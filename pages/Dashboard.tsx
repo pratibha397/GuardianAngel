@@ -14,48 +14,63 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
+  
+  // High-accuracy location state used for both UI and Alerts
   const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
   
   const stopListeningRef = useRef<(() => void) | null>(null);
+  const locationWatchId = useRef<number | null>(null);
 
   // --- Alert System ---
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
-    // Send Alert Signal and Location to Guardians
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        const { latitude, longitude } = pos.coords;
-        
-        currentUser.guardians.forEach(async (gEmail) => {
-           // 1. Send Chat Message (Record)
-           await sendMessage({
-             senderEmail: currentUser.email,
-             receiverEmail: gEmail,
-             text: `🚨 SOS! ALERT TRIGGERED: ${reason}`,
-             isLocation: true,
-             lat: latitude,
-             lng: longitude
-           });
-           
-           // 2. Send Alert Signal (Triggers Alarm on Guardian Phone)
-           await sendAlert(currentUser.email, gEmail, reason, latitude, longitude);
-        });
-      }, (err) => {
-          // If geolocation fails, still send the alert without location
-          console.error("Geo error", err);
-           currentUser.guardians.forEach(async (gEmail) => {
-             await sendMessage({
-               senderEmail: currentUser.email,
-               receiverEmail: gEmail,
-               text: `🚨 SOS! ALERT TRIGGERED: ${reason} (Location Unavailable)`,
-             });
-             await sendAlert(currentUser.email, gEmail, reason);
-           });
-      });
+    // Determine location to send
+    let lat = 0;
+    let lng = 0;
+    let isLocationValid = false;
+
+    // 1. Try cached high-accuracy location first (FASTEST)
+    if (currentLocation) {
+        lat = currentLocation.lat;
+        lng = currentLocation.lng;
+        isLocationValid = true;
+    } else {
+        // 2. Fallback to manual fetch if cache is empty (SLOWER)
+        try {
+            const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000, enableHighAccuracy: false });
+            });
+            lat = pos.coords.latitude;
+            lng = pos.coords.longitude;
+            isLocationValid = true;
+        } catch (e) {
+            console.error("Critical: Could not get location for alert", e);
+        }
     }
 
-    // Stop listening if active
+    const locationText = isLocationValid ? "" : "(Location Unknown)";
+    const alertText = `🚨 SOS! ALERT TRIGGERED: ${reason} ${locationText}`;
+
+    // Broadcast to all guardians
+    const guardianPromises = currentUser.guardians.map(async (gEmail) => {
+        // Chat Message
+        await sendMessage({
+            senderEmail: currentUser.email,
+            receiverEmail: gEmail,
+            text: alertText,
+            isLocation: isLocationValid,
+            lat: isLocationValid ? lat : undefined,
+            lng: isLocationValid ? lng : undefined
+        });
+        
+        // Alert Signal
+        await sendAlert(currentUser.email, gEmail, reason, isLocationValid ? lat : undefined, isLocationValid ? lng : undefined);
+    });
+
+    await Promise.all(guardianPromises);
+
+    // Stop listening if active to save resources/battery during emergency
     if (isListening) {
       toggleListening();
     }
@@ -73,7 +88,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         const monitor = await startLiveMonitoring(
           currentUser.dangerPhrase,
           (reason) => triggerAlert(reason),
-          (text) => setTranscript(prev => (prev + ' ' + text).slice(-100)) // Keep last 100 chars
+          (text) => setTranscript(prev => (prev + ' ' + text).slice(-100))
         );
         stopListeningRef.current = monitor.stop;
       } catch (e) {
@@ -100,38 +115,66 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
     return () => clearInterval(interval);
   }, [safeTimer]);
 
-  // --- Live Location Tracking (Self) ---
+  // --- Robust Live Location Tracking ---
   useEffect(() => {
-    if (navigator.geolocation) {
-        // Watch position for real-time updates on dashboard
-        const watchId = navigator.geolocation.watchPosition(
-            (pos) => {
-                setCurrentLocation({
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude
-                });
-            },
-            (err) => console.error("Location watch error:", err),
-            { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
-        );
-        return () => navigator.geolocation.clearWatch(watchId);
-    }
+    if (!navigator.geolocation) return;
+
+    // Start watching immediately
+    locationWatchId.current = navigator.geolocation.watchPosition(
+        (pos) => {
+            setCurrentLocation({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude
+            });
+        },
+        (err) => console.warn("Location watch warning:", err),
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+    );
+
+    return () => {
+        if (locationWatchId.current !== null) {
+            navigator.geolocation.clearWatch(locationWatchId.current);
+        }
+    };
   }, []);
 
-  // --- Nearby Places (One-time fetch) ---
+  // --- Nearby Places Fetching ---
   useEffect(() => {
-    if (navigator.geolocation) {
-      setLoadingPlaces(true);
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
-        setNearbyPlaces(places);
-        setLoadingPlaces(false);
-      }, (err) => {
-        console.error(err);
-        setLoadingPlaces(false);
-      });
-    }
-  }, []);
+    const fetchPlaces = async () => {
+        if (!navigator.geolocation) return;
+        
+        // Wait for a valid location if we don't have one yet
+        let lat = currentLocation?.lat;
+        let lng = currentLocation?.lng;
+
+        if (!lat || !lng) {
+            try {
+                const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+                });
+                lat = pos.coords.latitude;
+                lng = pos.coords.longitude;
+            } catch (e) {
+                console.log("Could not get location for places", e);
+                return;
+            }
+        }
+
+        if (lat && lng) {
+            setLoadingPlaces(true);
+            try {
+                const places = await getNearbyStations(lat, lng);
+                setNearbyPlaces(places);
+            } catch (e) {
+                console.error(e);
+            }
+            setLoadingPlaces(false);
+        }
+    };
+
+    fetchPlaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentLocation === null]); // Only retry if location transitions from null to exists
 
   return (
     <div className="space-y-6 pb-8">
@@ -153,7 +196,6 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
       {/* Hero / Monitor Section */}
       <div className={`relative overflow-hidden p-8 rounded-3xl border transition-all duration-500 shadow-2xl group ${isListening ? 'border-green-500/30 bg-gradient-to-b from-green-900/20 to-slate-900/50 shadow-green-900/20' : 'border-white/5 bg-card/40 backdrop-blur-md shadow-black/20'}`}>
         
-        {/* Background glow effects */}
         <div className={`absolute -top-20 -right-20 w-64 h-64 rounded-full blur-3xl opacity-20 transition-colors duration-700 ${isListening ? 'bg-green-500' : 'bg-blue-500'}`}></div>
         
         <div className="relative z-10">
@@ -168,9 +210,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                     </div>
                 </div>
                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 ${isListening ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-slate-700 text-gray-400'}`}>
-                    {isListening ? (
-                        <span className="animate-ping absolute inline-flex h-8 w-8 rounded-full bg-green-400 opacity-75"></span>
-                    ) : null}
+                    {isListening && <span className="animate-ping absolute inline-flex h-8 w-8 rounded-full bg-green-400 opacity-75"></span>}
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 relative z-10">
                         <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
                         <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.75 6.75 0 01-6 6.75v2.25h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.25A6.75 6.75 0 016 12.75v-1.5a.75.75 0 01.75-.75z" />
@@ -186,7 +226,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                         <span className="animate-pulse">● REC</span>
                     </div>
                     <p className="font-mono text-sm text-green-100/80 h-16 overflow-hidden leading-relaxed">
-                        {transcript || "Listening for triggers..."}
+                        {transcript || "Listening..."}
                     </p>
                 </div>
             )}
@@ -220,9 +260,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                       </p>
                   ) : (
                       <div className="flex items-center gap-2">
-                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce"></div>
-                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce delay-100"></div>
-                          <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce delay-200"></div>
+                          <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"></span>
                           <span className="text-gray-500 text-xs">Locating...</span>
                       </div>
                   )}
@@ -285,7 +323,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         </button>
       </div>
 
-      {/* Timer Cancellation (if active) */}
+      {/* Timer Cancellation */}
       {safeTimer !== null && (
           <div className="bg-amber-900/20 border border-amber-500/50 p-4 rounded-2xl flex justify-between items-center backdrop-blur-sm animate-fade-in">
               <div className="flex items-center gap-3">

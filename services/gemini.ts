@@ -116,19 +116,11 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
     const prompt = `
       I am located at Latitude: ${lat}, Longitude: ${lng}.
       
-      Please find the nearest Police Stations, Hospitals, and Fire Stations within a reasonable driving range.
-      List up to 15 relevant locations.
+      Please find the nearest Police Stations, Hospitals, and Fire Stations.
       
-      CRITICAL OUTPUT FORMAT:
-      For each location found, output a single line using exactly this format:
-      PLACE: <Name> || <Address> || <Distance from me>
-      
-      Example:
-      PLACE: General Hospital || 123 Main St, New York || 0.8 miles
-      PLACE: FDNY Station 4 || 5th Avenue || 1.2 km
-      
-      If you cannot determine exact distance, put "Nearby".
-      Do not include intro text. Just the list.
+      OUTPUT REQUIREMENTS:
+      List 5-10 places.
+      For each place, provide the Name, Address, and Approximate Distance.
     `;
     
     const response = await ai.models.generateContent({
@@ -147,49 +139,26 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
       }
     });
 
-    const text = response.text || "";
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const places: PlaceResult[] = [];
     
-    // Looser regex to capture content between delimiters even if whitespace varies
-    const regex = /PLACE:\s*([^|]+)\s*\|\|\s*([^|]+)\s*\|\|\s*(.+)/i;
-    
-    const lines = text.split('\n');
-
-    for (const line of lines) {
-        const cleanLine = line.replace(/^[\*\-\s]+/, ''); // Remove bullets
-        const match = cleanLine.match(regex);
-        
-        if (match) {
-            const title = match[1].trim();
-            const address = match[2].trim();
-            const distance = match[3].trim();
-
-            // Try to find exact map metadata
-            const matchedChunk = chunks.find((c: any) => 
-                c.maps?.title && title.toLowerCase().includes(c.maps.title.toLowerCase())
-            );
-            
-            const uri = matchedChunk?.maps?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
-
-            places.push({ title, address, distance, uri });
-        }
-    }
-
-    // Fallback: If formatted parsing failed but we have chunks, use chunks directly
-    if (places.length === 0 && chunks.length > 0) {
+    // Primary Strategy: Extract structured data directly from Grounding Chunks
+    if (chunks.length > 0) {
         chunks.forEach((chunk: any) => {
             if (chunk.maps) {
                 places.push({
-                    title: chunk.maps.title,
-                    uri: chunk.maps.uri,
-                    address: "View on Map for details", 
+                    title: chunk.maps.title || "Unknown Place",
+                    uri: chunk.maps.uri || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+                    address: "View map for details", // Maps tool grounding often has minimal address data in chunk, mostly title/uri
                     distance: "Nearby" 
                 });
             }
         });
     }
-    
+
+    // Secondary Strategy: If chunks are sparse, parse the text for details that match the chunks
+    // (Simplification: We prioritize the chunks because they contain the correct URIs)
+
     // Deduplicate
     const uniquePlaces = places.filter((place, index, self) =>
         index === self.findIndex((p) => p.title === place.title)
