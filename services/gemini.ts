@@ -18,10 +18,8 @@ export const startLiveMonitoring = async (
   const ai = getClient();
   const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
   
-  // Ask for microphone
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   
-  // System instruction to detect danger
   const sysInstruction = `
     You are a safety monitoring system. 
     Your task is to listen to the user audio stream.
@@ -41,11 +39,8 @@ export const startLiveMonitoring = async (
     callbacks: {
       onopen: () => {
         console.log("Monitoring started");
-        
-        // Audio Streaming Logic
         const source = inputAudioContext.createMediaStreamSource(stream);
         const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-        
         scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
           const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
           const pcmBlob = createBlob(inputData);
@@ -53,7 +48,6 @@ export const startLiveMonitoring = async (
             sess.sendRealtimeInput({ media: pcmBlob });
           });
         };
-        
         source.connect(scriptProcessor);
         scriptProcessor.connect(inputAudioContext.destination);
       },
@@ -61,7 +55,6 @@ export const startLiveMonitoring = async (
         if (message.serverContent?.outputTranscription?.text) {
              const text = message.serverContent.outputTranscription.text;
              onTranscription(text);
-
              if (text.includes('TRIGGER_DANGER')) {
                onDangerDetected(text);
              }
@@ -72,8 +65,8 @@ export const startLiveMonitoring = async (
     },
     config: {
       systemInstruction: sysInstruction,
-      responseModalities: [Modality.AUDIO], // We only need text output to analyze triggers, but AUDIO is required
-      outputAudioTranscription: {}, // Request transcription to get text
+      responseModalities: [Modality.AUDIO], 
+      outputAudioTranscription: {}, 
     }
   });
 
@@ -113,7 +106,7 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
   const ai = getClient();
   
   try {
-    const prompt = "Find the nearest police stations, hospitals, and fire stations. Provide the Name, Address, and Distance for each. Format each entry strictly as: Name | Address | Distance";
+    const prompt = "Find nearby police stations, hospitals, and fire stations. List exactly 5 places. For each place, output a line in this strict format: Name | Address | Distance. Example: Central Hospital | 123 Main St | 0.5 miles.";
     
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -122,10 +115,7 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
         tools: [{ googleMaps: {} }],
         toolConfig: {
           retrievalConfig: {
-            latLng: {
-              latitude: lat,
-              longitude: lng
-            }
+            latLng: { latitude: lat, longitude: lng }
           }
         }
       }
@@ -133,7 +123,6 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
 
     const text = response.text || "";
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    
     const places: PlaceResult[] = [];
     const lines = text.split('\n');
     
@@ -143,32 +132,25 @@ export const getNearbyStations = async (lat: number, lng: number): Promise<Place
             if (parts.length >= 2) {
                 const title = parts[0];
                 const address = parts[1];
-                const distance = parts[2] || "";
+                const distance = parts[2] || "Nearby";
 
-                // Attempt to find a grounding chunk link
                 const chunk = chunks.find((c: any) => 
                      c.web?.title && title.toLowerCase().includes(c.web.title.toLowerCase())
                 );
                 
-                // Use chunk URI if available, otherwise fallback to a search query
                 const uri = chunk?.web?.uri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title + " " + address)}`;
-
                 places.push({ title, address, distance, uri });
             }
         }
     }
-
-    // Fallback if parsing failed (e.g. model didn't follow format) and we have chunks
-    if (places.length === 0) {
-         chunks.forEach((chunk: any) => {
-            if (chunk.web?.uri && chunk.web?.title) {
-                places.push({
-                    title: chunk.web.title,
-                    uri: chunk.web.uri,
-                    // If fallback to chunks, we don't have address/distance easily
-                });
-            }
-         });
+    
+    // Fallback if formatting failed but chunks exist
+    if (places.length === 0 && chunks.length > 0) {
+        chunks.forEach((chunk: any) => {
+           if(chunk.web?.title && chunk.web?.uri) {
+               places.push({ title: chunk.web.title, address: "View on map", distance: "Nearby", uri: chunk.web.uri });
+           }
+        });
     }
 
     return places;

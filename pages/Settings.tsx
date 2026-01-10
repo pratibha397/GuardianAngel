@@ -19,68 +19,47 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     setSaving(true);
     const updated = { ...currentUser, dangerPhrase: phrase };
     await updateUser(updated);
-    setMsg("Settings saved successfully.");
+    setMsg("Security profile updated.");
     setSaving(false);
     setTimeout(() => setMsg(''), 3000);
   };
 
   return (
-    <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden">
-      <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
-
-      <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
-        <span className="bg-slate-700/50 p-2 rounded-xl text-2xl">⚙️</span>
-        Security Settings
-      </h2>
+    <div className="p-4 space-y-6">
+      <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
       
-      <div className="mb-8 p-6 bg-slate-800/30 rounded-2xl border border-white/5 hover:border-blue-500/20 transition-colors">
-          <label className="block text-blue-400 text-sm font-bold uppercase tracking-wider mb-3">Danger Trigger Phrase</label>
-          <div className="relative">
-              <input 
-                type="text"
-                className="w-full bg-slate-900/50 border border-white/10 rounded-xl p-4 pl-12 text-white text-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-600"
-                value={phrase}
-                onChange={e => setPhrase(e.target.value)}
-                placeholder="e.g. Help me now"
-              />
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
-                🎤
-              </div>
-          </div>
-          <p className="text-xs text-gray-500 mt-3 leading-relaxed">
-            The system continuously monitors for this phrase when "Active Shield" is enabled. 
-            Choose a phrase that is unique but natural to say in an emergency.
-          </p>
+      <div className="bg-slate-900/50 p-6 rounded-2xl border border-white/5">
+          <label className="block text-blue-400 text-xs font-bold uppercase tracking-wider mb-2">Safety Trigger</label>
+          <input 
+            type="text"
+            className="w-full bg-black/20 border border-white/10 rounded-xl p-3 text-white mb-2 focus:border-blue-500 outline-none"
+            value={phrase}
+            onChange={e => setPhrase(e.target.value)}
+          />
+          <p className="text-xs text-gray-500">Say this phrase to instantly trigger SOS.</p>
       </div>
 
-      <div className="flex items-center gap-4">
-        <button 
-            onClick={handleSave}
-            disabled={saving}
-            className={`flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 transition-all transform active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2`}
-        >
-            {saving ? (
-                <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    Saving...
-                </>
-            ) : (
-                'Save Changes'
-            )}
-        </button>
-      </div>
-      
-      {msg && (
-        <div className="mt-4 p-3 bg-green-500/10 border border-green-500/20 text-green-400 rounded-xl text-center text-sm font-medium animate-fade-in">
-            {msg}
-        </div>
-      )}
+      <button 
+        onClick={handleSave}
+        disabled={saving}
+        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all"
+      >
+        {saving ? 'Saving...' : 'Save Configuration'}
+      </button>
 
-      <div className="mt-12 pt-8 border-t border-white/5">
-        <h3 className="text-gray-400 text-sm font-bold uppercase mb-4">Account</h3>
-        <div className="text-gray-500 text-sm">
-            <p>Email: <span className="text-gray-300">{currentUser.email}</span></p>
-            <p className="mt-2">User ID: <span className="font-mono text-xs opacity-50">{currentUser.id}</span></p>
+      {msg && <div className="text-center text-green-400 text-sm font-medium animate-pulse">{msg}</div>}
+
+      <div className="border-t border-white/5 pt-6 mt-8">
+        <h3 className="text-gray-500 text-xs font-bold uppercase mb-4">Device Info</h3>
+        <div className="bg-black/20 p-4 rounded-xl border border-white/5 space-y-2">
+            <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Account</span>
+                <span className="text-white truncate max-w-[200px]">{currentUser.email}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Version</span>
+                <span className="text-white">Sentinel v2.5.1</span>
+            </div>
         </div>
       </div>
     </div>
