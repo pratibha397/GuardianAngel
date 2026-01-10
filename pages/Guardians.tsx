@@ -1,6 +1,6 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { User } from '../types';
-import { sendAlert, sendMessage, updateLiveLocation } from './storage';
+import { sendAlert, sendMessage, updateLiveLocation } from './services/storage';
 
 /**
  * Singleton Service to manage Safety Monitoring.
