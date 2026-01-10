@@ -1,39 +1,35 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 
-// Safe access to process.env in browser environment
-const getEnv = () => {
-  if (typeof window !== 'undefined' && (window as any).process) {
-    return (window as any).process.env || {};
-  }
-  return {};
-};
-
-const env = getEnv();
-
-// Helper to ensure URL is valid to prevent SDK crash
-const getValidUrl = (url: string | undefined, fallback: string) => {
-  if (!url) return fallback;
-  try {
-    new URL(url);
-    return url;
-  } catch (e) {
-    console.warn(`Invalid Firebase URL found: ${url}. Using fallback.`);
-    return fallback;
-  }
-};
+// --- FIREBASE CONFIGURATION ---
+// To enable cloud syncing, you MUST replace these values with your Firebase Project keys.
+// 1. Go to https://console.firebase.google.com/
+// 2. Create a project
+// 3. Add a Web App
+// 4. Copy the "firebaseConfig" object
+// 5. Ensure "Realtime Database" is enabled in the console and Rules are set to public (read: true, write: true) for testing.
 
 const firebaseConfig = {
-  apiKey: env.FIREBASE_API_KEY || 'demo-key',
-  authDomain: env.FIREBASE_AUTH_DOMAIN || 'demo-project.firebaseapp.com',
-  // CRITICAL FIX: The SDK throws a fatal error if this is not a valid URL.
-  // We provide a syntactically valid placeholder if the env var is missing or invalid.
-  databaseURL: getValidUrl(env.FIREBASE_DB_URL, 'https://guardian-sentinel-demo.firebaseio.com'),
-  projectId: env.FIREBASE_PROJECT_ID || 'demo-project',
-  storageBucket: env.FIREBASE_STORAGE_BUCKET || 'demo-project.appspot.com',
-  messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID || '123456789',
-  appId: env.FIREBASE_APP_ID || '1:123456789:web:abcdef'
+  // If you are using a bundler (like Vite/Webpack) with .env files, keep the process.env part.
+  // Otherwise, directly paste your strings over the "PASTE_..." text.
+  apiKey: process.env.FIREBASE_API_KEY || "PASTE_YOUR_API_KEY_HERE",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  // IMPORTANT: This URL must be correct for Realtime Database to work
+  databaseURL: process.env.FIREBASE_DB_URL || "PASTE_YOUR_DATABASE_URL_HERE", 
+  projectId: process.env.FIREBASE_PROJECT_ID || "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "PASTE_YOUR_SENDER_ID_HERE",
+  appId: process.env.FIREBASE_APP_ID || "PASTE_YOUR_APP_ID_HERE"
 };
+
+// Validation to help debug connection issues
+if (firebaseConfig.apiKey.includes("PASTE_") || !firebaseConfig.databaseURL.startsWith("http")) {
+  console.warn(
+    "%c FIREBASE NOT CONFIGURED ", 
+    "background: red; color: white; font-weight: bold; padding: 4px; font-size: 14px;",
+    "\n\nData is NOT saving to the cloud. Please open 'services/firebase.ts' and paste your Firebase credentials.\n"
+  );
+}
 
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
