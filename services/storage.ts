@@ -18,6 +18,17 @@ const generateId = () => {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
+// --- TIMEOUT HELPER (Fixes Slow Login) ---
+// If the promise doesn't resolve in 2000ms, it rejects, forcing the fallback code to run.
+const withTimeout = <T>(promise: Promise<T>, ms: number = 2000): Promise<T> => {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Network timeout - switching to local")), ms);
+        promise
+            .then(res => { clearTimeout(timer); resolve(res); })
+            .catch(err => { clearTimeout(timer); reject(err); });
+    });
+};
+
 // --- LocalStorage Fallback Helpers ---
 const getLocalUsers = (): Record<string, User> => {
     try {
@@ -69,25 +80,26 @@ export const logoutUser = () => {
 
 export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'dangerPhrase'>): Promise<User | null> => {
   const sanitizedEmail = sanitize(user.email);
-  
-  // Check if exists remotely first to prevent duplicates
-  try {
-      const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
-      if (snapshot.exists()) return null; // User exists
-  } catch (e) {}
-
   const newUser: User = {
     ...user,
     id: generateId(),
     guardians: [],
-    dangerPhrase: 'help me now'
+    dangerPhrase: 'help'
   };
-
+  
+  // Optimistic Local Save (Instant UI feedback)
   saveLocalUser(newUser);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
 
-  // Sync to Firebase
-  set(ref(db, `users/${sanitizedEmail}`), newUser).catch(console.warn);
+  // Sync to Firebase with Timeout
+  // If this fails or times out, the user is still logged in locally
+  withTimeout(get(child(ref(db), `users/${sanitizedEmail}`)))
+    .then((snapshot) => {
+       if (!snapshot.exists()) {
+           set(ref(db, `users/${sanitizedEmail}`), newUser).catch(console.warn);
+       }
+    })
+    .catch(() => console.warn("Network slow, using local mode for registration"));
 
   return newUser;
 };
@@ -95,9 +107,9 @@ export const registerUser = async (user: Omit<User, 'id' | 'guardians' | 'danger
 export const loginUser = async (email: string, password: string): Promise<User | null> => {
   const sanitizedEmail = sanitize(email);
   
-  // 1. Try Remote
+  // 1. Try Remote with strict timeout
   try {
-    const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
+    const snapshot = await withTimeout(get(child(ref(db), `users/${sanitizedEmail}`)));
     if (snapshot.exists()) {
       const user = snapshot.val() as User;
       if (user.password === password) {
@@ -107,7 +119,7 @@ export const loginUser = async (email: string, password: string): Promise<User |
       }
     }
   } catch (e) {
-      console.warn("Remote login failed, trying local backup", e);
+      console.warn("Remote login failed/timed out, trying local backup");
   }
 
   // 2. Try Local
@@ -125,54 +137,37 @@ export const updateUser = async (updatedUser: User): Promise<void> => {
   const sanitizedEmail = sanitize(updatedUser.email);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
   saveLocalUser(updatedUser);
+  // Fire and forget
   update(ref(db, `users/${sanitizedEmail}`), updatedUser).catch(console.warn);
 };
 
-// CRITICAL FIX: Force Fetch for User Lookup
 export const findUserByEmail = async (email: string): Promise<User | null> => {
     const searchEmail = email.trim().toLowerCase();
     const sanitizedEmail = sanitize(email);
     
-    // 1. Direct Remote Lookup (Best for consistency)
+    // 1. Remote Lookup with Timeout
     try {
-        const snapshot = await get(child(ref(db), `users/${sanitizedEmail}`));
+        const snapshot = await withTimeout(get(child(ref(db), `users/${sanitizedEmail}`)));
         if (snapshot.exists()) {
             const user = snapshot.val() as User;
             saveLocalUser(user);
             return user;
         }
-    } catch (e) { console.warn("Direct lookup failed", e); }
+    } catch (e) { console.warn("Direct lookup failed/timed out"); }
     
-    // 2. Scan All Users (Fallback if keys are messed up)
-    try {
-        const snapshot = await get(child(ref(db), 'users'));
-        if (snapshot.exists()) {
-            const allUsers = snapshot.val();
-            // Iterate and match email field directly
-            const match = Object.values(allUsers).find((u: any) => 
-                u.email && u.email.trim().toLowerCase() === searchEmail
-            );
-            if (match) {
-                saveLocalUser(match as User);
-                return match as User;
-            }
-        }
-    } catch (e) { console.warn("Scan failed", e); }
-
-    // 3. Local Fallback (Last resort)
+    // 2. Local Fallback
     const local = getLocalUsers();
     return Object.values(local).find(u => u.email.toLowerCase() === searchEmail) || null;
 };
 
 export const getUsers = async (): Promise<User[]> => {
   const localUsers = Object.values(getLocalUsers());
-  try {
-      get(child(ref(db), 'users')).then(snapshot => {
-          if (snapshot.exists()) {
-              Object.values(snapshot.val()).forEach((u: any) => saveLocalUser(u));
-          }
-      }).catch(() => {});
-  } catch {}
+  // Background sync
+  get(child(ref(db), 'users')).then(snapshot => {
+      if (snapshot.exists()) {
+          Object.values(snapshot.val()).forEach((u: any) => saveLocalUser(u));
+      }
+  }).catch(() => {});
   return localUsers;
 };
 
