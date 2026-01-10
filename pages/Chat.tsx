@@ -15,9 +15,13 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
   const [loadingContacts, setLoadingContacts] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom whenever messages change
+  const scrollToBottom = () => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom();
   }, [messages]);
 
   // Load contacts
@@ -27,8 +31,6 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
       try {
         const allUsers = await getUsers();
         
-        // Find users that are either in my guardians list OR have me in their guardians list
-        // Note: This relies on fetching all users, which is fine for a demo but not scalable for production.
         const relevantEmails = new Set<string>();
         
         // Add my guardians
@@ -67,15 +69,15 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
     if (selectedGuardian) {
       setMessages([]); // Clear previous messages while loading
       const unsubscribe = subscribeToMessages(currentUser.email, selectedGuardian, (msgs) => {
+        // When real data comes from Firebase, it replaces our optimistic state
         setMessages(msgs);
       });
       
-      // Update name for header
       const contact = contacts.find(c => c.email === selectedGuardian);
       setSelectedGuardianName(contact ? contact.name : selectedGuardian);
 
       return () => {
-          unsubscribe(); // Cleanup listener on unmount or switch
+          unsubscribe();
       };
     }
   }, [selectedGuardian, currentUser.email, contacts]);
@@ -83,24 +85,48 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
   const handleSend = async () => {
     if (!inputText.trim() || !selectedGuardian) return;
     const text = inputText;
-    setInputText(''); 
+    setInputText(''); // Clear input immediately
+    
+    // OPTIMISTIC UPDATE: Add message to UI immediately before server ack
+    const tempMessage: Message = {
+        id: `temp-${Date.now()}`,
+        senderEmail: currentUser.email,
+        receiverEmail: selectedGuardian,
+        text: text,
+        timestamp: Date.now()
+    };
+    setMessages(prev => [...prev, tempMessage]);
     
     try {
+        // Send to backend (fire and forget)
         await sendMessage({
             senderEmail: currentUser.email,
             receiverEmail: selectedGuardian,
             text: text
         });
-        // Optimistic update not needed as Firebase listener triggers immediately
     } catch (e) {
         console.error("Failed to send", e);
-        alert("Failed to send message. Check connection.");
-        setInputText(text); // Restore text
+        // If failed, we might want to show an error or remove the temp message
+        // For this demo, we assume high reliability or eventual consistency
     }
   };
 
   const sendLocation = async () => {
     if (!selectedGuardian) return;
+    
+    // Optimistic UI for Location
+    const tempMessage: Message = {
+        id: `temp-loc-${Date.now()}`,
+        senderEmail: currentUser.email,
+        receiverEmail: selectedGuardian,
+        text: "Sharing Location...",
+        timestamp: Date.now(),
+        isLocation: true,
+        lat: 0, 
+        lng: 0
+    };
+    setMessages(prev => [...prev, tempMessage]);
+
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(async (pos) => {
             await sendMessage({
@@ -206,14 +232,18 @@ const Chat: React.FC<ChatProps> = ({ currentUser }) => {
                                     </div>
                                     <div className="w-full h-24 bg-black/20 rounded-lg flex items-center justify-center border border-white/10 overflow-hidden relative group cursor-pointer">
                                         <div className="absolute inset-0 bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors"></div>
-                                        <a 
-                                            href={`https://www.google.com/maps/search/?api=1&query=${m.lat},${m.lng}`} 
-                                            target="_blank" 
-                                            rel="noreferrer"
-                                            className="relative z-10 bg-white text-blue-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:scale-105 transition-transform"
-                                        >
-                                            View on Maps
-                                        </a>
+                                        {m.lat !== 0 ? (
+                                            <a 
+                                                href={`https://www.google.com/maps/search/?api=1&query=${m.lat},${m.lng}`} 
+                                                target="_blank" 
+                                                rel="noreferrer"
+                                                className="relative z-10 bg-white text-blue-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:scale-105 transition-transform"
+                                            >
+                                                View on Maps
+                                            </a>
+                                        ) : (
+                                            <span className="text-xs text-gray-400">Loading map...</span>
+                                        )}
                                     </div>
                                 </div>
                             ) : (

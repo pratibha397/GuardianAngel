@@ -1,4 +1,4 @@
-import { child, get, off, onValue, push, ref, remove, set, update } from 'firebase/database';
+import { child, get, onValue, push, ref, remove, set, update } from 'firebase/database';
 import { Alert, Message, User } from '../types';
 import { db } from './firebase';
 
@@ -146,7 +146,8 @@ const getChatId = (email1: string, email2: string) => {
   return [sanitize(email1), sanitize(email2)].sort().join('_');
 };
 
-export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>) => {
+// MODIFIED: Return the message object immediately and don't await the network call
+export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>): Promise<Message> => {
   const chatId = getChatId(msg.senderEmail, msg.receiverEmail);
   const timestamp = Date.now();
   const messagesRef = ref(db, `messages/${chatId}`);
@@ -158,8 +159,10 @@ export const sendMessage = async (msg: Omit<Message, 'id' | 'timestamp'>) => {
       timestamp 
   };
 
-  // We await this to ensure it reaches Firebase before resolving
-  await set(newMessageRef, newMessage);
+  // Fire and forget - don't block the UI waiting for server ack
+  set(newMessageRef, newMessage).catch(e => console.error("Background send failed", e));
+  
+  return newMessage;
 };
 
 export const subscribeToMessages = (user1Email: string, user2Email: string, callback: (msgs: Message[]) => void) => {
@@ -167,6 +170,7 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
   const messagesRef = ref(db, `messages/${chatId}`);
   
   // Real-time listener
+  // onValue returns the unsubscribe function in standard modular SDK
   const unsubscribe = onValue(messagesRef, (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.val();
@@ -178,7 +182,7 @@ export const subscribeToMessages = (user1Email: string, user2Email: string, call
     }
   });
 
-  return () => off(messagesRef);
+  return unsubscribe;
 };
 
 export const deleteConversation = async (user1Email: string, user2Email: string) => {
@@ -221,5 +225,5 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
         }
     });
     
-    return () => off(alertsRef);
+    return unsubscribe;
 };

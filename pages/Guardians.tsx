@@ -11,11 +11,29 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
   const [emailInput, setEmailInput] = useState('');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [previewName, setPreviewName] = useState<string | null>(null);
   const [guardianDetails, setGuardianDetails] = useState<Record<string, {name: string, email: string}>>({});
 
   const guardianList = currentUser.guardians || [];
 
-  // Fetch guardian names when the list changes
+  // Effect to lookup user name as they type (Debounced)
+  useEffect(() => {
+      const timeoutId = setTimeout(async () => {
+          if (emailInput.length > 5 && emailInput.includes('@')) {
+             const found = await findUserByEmail(emailInput);
+             if (found) {
+                 setPreviewName(found.name);
+             } else {
+                 setPreviewName(null);
+             }
+          } else {
+              setPreviewName(null);
+          }
+      }, 500);
+      return () => clearTimeout(timeoutId);
+  }, [emailInput]);
+
+  // Fetch guardian names for list
   useEffect(() => {
     const fetchNames = async () => {
         const details: Record<string, {name: string, email: string}> = {};
@@ -80,6 +98,7 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
         }));
 
         setEmailInput('');
+        setPreviewName(null);
         setMsg(`Success! Added ${targetUser.name}.`);
     } catch (error) {
         console.error(error);
@@ -114,19 +133,27 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser, onUserUpdated }) => 
             Guardians are your safety net. They receive instant SOS alerts, live location tracking, and audio feeds during emergencies.
         </p>
 
-        <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg">
-            <input 
-                type="email" 
-                placeholder="Enter guardian email"
-                className="flex-1 bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                value={emailInput}
-                onChange={e => setEmailInput(e.target.value)}
-                required
-            />
+        <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg items-start">
+            <div className="flex-1 relative">
+                <input 
+                    type="email" 
+                    placeholder="Enter guardian email"
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                    value={emailInput}
+                    onChange={e => setEmailInput(e.target.value)}
+                    required
+                />
+                {previewName && (
+                    <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-blue-500/50 rounded-xl px-4 py-2 text-sm text-blue-300 flex items-center gap-2 animate-fade-in shadow-xl z-20">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                        Found: <span className="font-bold text-white">{previewName}</span>
+                    </div>
+                )}
+            </div>
             <button 
                 type="submit" 
                 disabled={loading}
-                className="bg-blue-600 hover:bg-blue-500 px-8 rounded-2xl text-white font-bold disabled:opacity-50 shadow-lg shadow-blue-900/20 transition-all hover:scale-105"
+                className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-2xl text-white font-bold disabled:opacity-50 shadow-lg shadow-blue-900/20 transition-all hover:scale-105 h-full"
             >
                 {loading ? '...' : 'Add'}
             </button>
