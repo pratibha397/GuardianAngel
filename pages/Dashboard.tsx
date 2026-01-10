@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getNearbyStations, startLiveMonitoring } from '../services/gemini';
-import { sendAlert, sendMessage } from '../services/storage';
+import { sendAlert, sendMessage, updateLiveLocation } from '../services/storage';
 import { PlaceResult, User } from '../types';
 
 interface DashboardProps {
@@ -14,19 +14,25 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [safeTimer, setSafeTimer] = useState<number | null>(null);
+  
+  // Location State
   const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [locError, setLocError] = useState<string>('');
   
   const stopListeningRef = useRef<(() => void) | null>(null);
+  const locationWatchId = useRef<number | null>(null);
+  const locationBroadcastInterval = useRef<any>(null);
 
   // --- Alert System ---
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
-    // Send Alert Signal and Location to Guardians
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
+    // Get fresh location specifically for the alert
+    navigator.geolocation.getCurrentPosition((pos) => {
         const { latitude, longitude } = pos.coords;
-        
+        // Broadcast immediately
+        updateLiveLocation(currentUser.email, latitude, longitude);
+
         currentUser.guardians.forEach(async (gEmail) => {
            // 1. Send Chat Message (Record)
            await sendMessage({
@@ -42,8 +48,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
            await sendAlert(currentUser.email, gEmail, reason, latitude, longitude);
         });
       }, (err) => {
-          // If geolocation fails, still send the alert without location
-          console.error("Geo error", err);
+          console.error("Geo error on alert", err);
+           // Fallback if location fails
            currentUser.guardians.forEach(async (gEmail) => {
              await sendMessage({
                senderEmail: currentUser.email,
@@ -52,8 +58,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
              });
              await sendAlert(currentUser.email, gEmail, reason);
            });
-      });
-    }
+      }, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
 
     // Stop listening if active
     if (isListening) {
@@ -100,26 +106,68 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
     return () => clearInterval(interval);
   }, [safeTimer]);
 
-  // --- Live Location Tracking (Self) ---
+  // --- ROBUST REAL-TIME LOCATION TRACKING ---
+  
+  // 1. Setup Watcher (Local Update)
   useEffect(() => {
-    if (navigator.geolocation) {
-        // Watch position for real-time updates on dashboard
-        const watchId = navigator.geolocation.watchPosition(
-            (pos) => {
-                setCurrentLocation({
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude
-                });
-            },
-            (err) => console.error("Location watch error:", err),
-            { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
-        );
-        return () => navigator.geolocation.clearWatch(watchId);
+    if (!navigator.geolocation) {
+        setLocError("Geolocation not supported");
+        return;
     }
+
+    const success = (pos: GeolocationPosition) => {
+        setLocError('');
+        const { latitude, longitude } = pos.coords;
+        setCurrentLocation({ lat: latitude, lng: longitude });
+    };
+
+    const error = (err: GeolocationPositionError) => {
+        console.warn("Location error:", err.message);
+        if (err.code === 1) setLocError("Permission denied");
+        else if (err.code === 2) setLocError("Position unavailable");
+        else if (err.code === 3) setLocError("Location timed out - Retrying...");
+    };
+
+    const options = {
+        enableHighAccuracy: true,
+        maximumAge: 5000, // Accept cached positions up to 5s old
+        timeout: 10000    // Wait 10s before timing out
+    };
+
+    locationWatchId.current = navigator.geolocation.watchPosition(success, error, options);
+
+    return () => {
+        if (locationWatchId.current !== null) navigator.geolocation.clearWatch(locationWatchId.current);
+    };
   }, []);
 
-  // --- Nearby Places (One-time fetch) ---
+  // 2. Broadcast Loop (Send to Firebase)
+  // Only broadcast if listening (Shield Active) or Alert Active
   useEffect(() => {
+      if (isListening || alertActive) {
+          // Send update immediately
+          if (currentLocation) {
+              updateLiveLocation(currentUser.email, currentLocation.lat, currentLocation.lng);
+          }
+
+          // Then interval
+          locationBroadcastInterval.current = setInterval(() => {
+              if (currentLocation) {
+                  updateLiveLocation(currentUser.email, currentLocation.lat, currentLocation.lng);
+              }
+          }, 3000); // Update every 3 seconds for near real-time tracking
+      } else {
+          if (locationBroadcastInterval.current) clearInterval(locationBroadcastInterval.current);
+      }
+
+      return () => {
+          if (locationBroadcastInterval.current) clearInterval(locationBroadcastInterval.current);
+      };
+  }, [isListening, alertActive, currentLocation, currentUser.email]);
+
+
+  // --- Nearby Places Fetch ---
+  const fetchNearby = () => {
     if (navigator.geolocation) {
       setLoadingPlaces(true);
       navigator.geolocation.getCurrentPosition(async (pos) => {
@@ -127,10 +175,16 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         setNearbyPlaces(places);
         setLoadingPlaces(false);
       }, (err) => {
-        console.error(err);
+        console.error("Error fetching nearby location", err);
         setLoadingPlaces(false);
       });
+    } else {
+        alert("Geolocation is not enabled.");
     }
+  };
+
+  useEffect(() => {
+    fetchNearby();
   }, []);
 
   return (
@@ -188,6 +242,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                     <p className="font-mono text-sm text-green-100/80 h-16 overflow-hidden leading-relaxed">
                         {transcript || "Listening for triggers..."}
                     </p>
+                    
+                    {currentLocation && (
+                        <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2">
+                             <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                             <span className="text-[10px] text-blue-300 font-mono">BROADCASTING LOCATION: {currentLocation.lat.toFixed(4)}, {currentLocation.lng.toFixed(4)}</span>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -218,6 +279,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
                       <p className="text-white font-mono text-sm tracking-wide">
                           {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
                       </p>
+                  ) : locError ? (
+                       <span className="text-red-400 text-xs font-bold">{locError}</span>
                   ) : (
                       <div className="flex items-center gap-2">
                           <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce"></div>
@@ -303,10 +366,19 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
 
       {/* Nearby Stations */}
       <div className="bg-card/40 backdrop-blur-md rounded-3xl p-6 border border-white/5 shadow-xl">
-        <h3 className="text-white font-bold text-xl mb-6 flex items-center gap-3">
-            <span className="bg-blue-500/20 p-2 rounded-lg text-blue-400">📍</span>
-            Nearby Safe Havens
-        </h3>
+        <div className="flex justify-between items-center mb-6">
+            <h3 className="text-white font-bold text-xl flex items-center gap-3">
+                <span className="bg-blue-500/20 p-2 rounded-lg text-blue-400">📍</span>
+                Nearby Safe Havens
+            </h3>
+            <button 
+                onClick={fetchNearby}
+                disabled={loadingPlaces}
+                className="text-sm bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-gray-300 transition-colors flex items-center gap-2"
+            >
+                {loadingPlaces ? <span className="w-3 h-3 border border-white/50 border-t-transparent rounded-full animate-spin"></span> : '↻ Refresh'}
+            </button>
+        </div>
         
         {loadingPlaces ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400 space-y-4">

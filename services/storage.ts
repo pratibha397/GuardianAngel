@@ -329,3 +329,31 @@ export const subscribeToAlerts = (userEmail: string, callback: (alerts: Alert[])
         clearInterval(interval);
     };
 };
+
+// --- REAL-TIME LOCATION SHARING ---
+
+export const updateLiveLocation = async (email: string, lat: number, lng: number) => {
+    const userKey = sanitize(email);
+    // Write to a dedicated lightweight node for frequent updates
+    const locationRef = ref(db, `locations/${userKey}`);
+    await set(locationRef, {
+        lat,
+        lng,
+        timestamp: Date.now()
+    }).catch(e => console.warn("Location update failed", e));
+};
+
+export const subscribeToLiveLocation = (email: string, callback: (loc: { lat: number, lng: number, timestamp: number } | null) => void) => {
+    const userKey = sanitize(email);
+    const locationRef = ref(db, `locations/${userKey}`);
+    
+    const unsubscribe = onValue(locationRef, (snapshot) => {
+        if (snapshot.exists()) {
+            callback(snapshot.val());
+        } else {
+            callback(null);
+        }
+    });
+
+    return () => off(locationRef);
+};
