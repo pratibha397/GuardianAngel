@@ -27,14 +27,33 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const triggerAlert = async (reason: string) => {
     setAlertActive(true);
     
-    // Get fresh location specifically for the alert
-    navigator.geolocation.getCurrentPosition((pos) => {
-        const { latitude, longitude } = pos.coords;
-        // Broadcast immediately
+    // Attempt to get location one-off with fallback
+    const getLocationForAlert = () => {
+        return new Promise<{latitude: number, longitude: number}>((resolve, reject) => {
+             // Try High Accuracy First
+             navigator.geolocation.getCurrentPosition(
+                 (pos) => resolve(pos.coords),
+                 (err) => {
+                     console.warn("High accuracy failed, trying low accuracy");
+                     // Fallback
+                     navigator.geolocation.getCurrentPosition(
+                         (pos) => resolve(pos.coords),
+                         (finalErr) => reject(finalErr),
+                         { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+                     );
+                 },
+                 { enableHighAccuracy: true, timeout: 5000 }
+             );
+        });
+    };
+
+    try {
+        const coords = await getLocationForAlert();
+        const { latitude, longitude } = coords;
+        
         updateLiveLocation(currentUser.email, latitude, longitude);
 
         currentUser.guardians.forEach(async (gEmail) => {
-           // 1. Send Chat Message (Record)
            await sendMessage({
              senderEmail: currentUser.email,
              receiverEmail: gEmail,
@@ -43,23 +62,21 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
              lat: latitude,
              lng: longitude
            });
-           
-           // 2. Send Alert Signal (Triggers Alarm on Guardian Phone)
            await sendAlert(currentUser.email, gEmail, reason, latitude, longitude);
         });
-      }, (err) => {
-          console.error("Geo error on alert", err);
-           // Fallback if location fails
-           currentUser.guardians.forEach(async (gEmail) => {
+
+    } catch (e) {
+        console.error("Geo error on alert", e);
+        // Send alert without location if it completely fails
+        currentUser.guardians.forEach(async (gEmail) => {
              await sendMessage({
                senderEmail: currentUser.email,
                receiverEmail: gEmail,
                text: `🚨 SOS! ALERT TRIGGERED: ${reason} (Location Unavailable)`,
              });
              await sendAlert(currentUser.email, gEmail, reason);
-           });
-      }, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-    );
+        });
+    }
 
     // Stop listening if active
     if (isListening) {
@@ -108,7 +125,6 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
 
   // --- ROBUST REAL-TIME LOCATION TRACKING ---
   
-  // 1. Setup Watcher (Local Update)
   useEffect(() => {
     if (!navigator.geolocation) {
         setLocError("Geolocation not supported");
@@ -125,16 +141,28 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
         console.warn("Location error:", err.message);
         if (err.code === 1) setLocError("Permission denied");
         else if (err.code === 2) setLocError("Position unavailable");
-        else if (err.code === 3) setLocError("Location timed out - Retrying...");
+        else if (err.code === 3) {
+            setLocError("High accuracy timeout, switching to battery saver mode...");
+            restartWatcher(false); // Restart with low accuracy
+        }
     };
 
-    const options = {
-        enableHighAccuracy: true,
-        maximumAge: 5000, // Accept cached positions up to 5s old
-        timeout: 10000    // Wait 10s before timing out
+    const startWatcher = (highAccuracy: boolean) => {
+        if (locationWatchId.current !== null) navigator.geolocation.clearWatch(locationWatchId.current);
+        
+        locationWatchId.current = navigator.geolocation.watchPosition(success, error, {
+            enableHighAccuracy: highAccuracy,
+            maximumAge: 10000, 
+            timeout: 10000    
+        });
     };
 
-    locationWatchId.current = navigator.geolocation.watchPosition(success, error, options);
+    const restartWatcher = (highAccuracy: boolean) => {
+        startWatcher(highAccuracy);
+    };
+
+    // Initial start with high accuracy
+    startWatcher(true);
 
     return () => {
         if (locationWatchId.current !== null) navigator.geolocation.clearWatch(locationWatchId.current);
@@ -142,20 +170,16 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   }, []);
 
   // 2. Broadcast Loop (Send to Firebase)
-  // Only broadcast if listening (Shield Active) or Alert Active
   useEffect(() => {
       if (isListening || alertActive) {
-          // Send update immediately
           if (currentLocation) {
               updateLiveLocation(currentUser.email, currentLocation.lat, currentLocation.lng);
           }
-
-          // Then interval
           locationBroadcastInterval.current = setInterval(() => {
               if (currentLocation) {
                   updateLiveLocation(currentUser.email, currentLocation.lat, currentLocation.lng);
               }
-          }, 3000); // Update every 3 seconds for near real-time tracking
+          }, 3000); 
       } else {
           if (locationBroadcastInterval.current) clearInterval(locationBroadcastInterval.current);
       }
@@ -170,14 +194,25 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
   const fetchNearby = () => {
     if (navigator.geolocation) {
       setLoadingPlaces(true);
-      navigator.geolocation.getCurrentPosition(async (pos) => {
+      
+      const onSuccess = async (pos: GeolocationPosition) => {
         const places = await getNearbyStations(pos.coords.latitude, pos.coords.longitude);
         setNearbyPlaces(places);
         setLoadingPlaces(false);
-      }, (err) => {
-        console.error("Error fetching nearby location", err);
-        setLoadingPlaces(false);
-      });
+      };
+      
+      const onError = (err: GeolocationPositionError) => {
+          console.error("Error fetching nearby location", err);
+          // Retry with low accuracy if timeout
+          if (err.code === 3) {
+              navigator.geolocation.getCurrentPosition(onSuccess, () => setLoadingPlaces(false), { enableHighAccuracy: false, timeout: 10000 });
+          } else {
+              setLoadingPlaces(false);
+          }
+      };
+
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, { enableHighAccuracy: true, timeout: 5000 });
+
     } else {
         alert("Geolocation is not enabled.");
     }
