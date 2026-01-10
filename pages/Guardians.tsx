@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getUsers, updateUser } from '../services/storage';
+import { findUserByEmail, updateUser } from '../services/storage';
 import { User } from '../types';
 
 interface GuardiansProps {
@@ -8,46 +8,48 @@ interface GuardiansProps {
 
 const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
   const [emailInput, setEmailInput] = useState('');
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{text: string, type: 'success' | 'error'} | null>(null);
   const [loading, setLoading] = useState(false);
 
   const addGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (currentUser.guardians.includes(emailInput)) {
-        setMsg("User is already a guardian.");
+    setMsg(null);
+    
+    const targetEmail = emailInput.toLowerCase().trim();
+
+    if (!targetEmail) return;
+    if (currentUser.guardians.includes(targetEmail)) {
+        setMsg({text: "User is already a guardian.", type: 'error'});
+        return;
+    }
+    if (targetEmail === currentUser.email) {
+        setMsg({text: "You cannot add yourself.", type: 'error'});
         return;
     }
 
     setLoading(true);
-    setMsg('');
 
     try {
-        const allUsers = await getUsers();
-        const targetUser = allUsers.find(u => u.email === emailInput);
+        // Efficient network lookup
+        const targetUser = await findUserByEmail(targetEmail);
 
         if (!targetUser) {
-            setMsg("User not found. They must register first.");
-            setLoading(false);
-            return;
-        }
-
-        if (targetUser.email === currentUser.email) {
-            setMsg("You cannot add yourself.");
+            setMsg({text: "User not found. They must register on the app first.", type: 'error'});
             setLoading(false);
             return;
         }
 
         const updatedUser = {
             ...currentUser,
-            guardians: [...currentUser.guardians, emailInput]
+            guardians: [...currentUser.guardians, targetEmail]
         };
         
         await updateUser(updatedUser);
         setEmailInput('');
-        setMsg("Guardian added successfully.");
+        setMsg({text: "Guardian added successfully.", type: 'success'});
     } catch (error) {
         console.error(error);
-        setMsg("Failed to add guardian.");
+        setMsg({text: "Network error. Please try again.", type: 'error'});
     } finally {
         setLoading(false);
     }
@@ -61,28 +63,23 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
           guardians: currentUser.guardians.filter(g => g !== email)
       };
       await updateUser(updatedUser);
+      // Force reload to refresh state if needed, or we could pass a callback from parent
       window.location.reload(); 
   };
 
   return (
     <div className="space-y-6">
       <div className="bg-card/40 backdrop-blur-md p-8 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-32 h-32">
-                <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.352-.272-2.636-.759-3.807a.75.75 0 00-.724-.516 11.209 11.209 0 01-7.75-3.256zM8.25 10.5a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z" clipRule="evenodd" />
-            </svg>
-        </div>
-
         <h2 className="text-3xl font-bold text-white mb-2 tracking-tight">Manage Guardians</h2>
         <p className="text-gray-400 text-sm mb-6 max-w-md leading-relaxed">
-            Guardians are your safety net. They receive instant SOS alerts, live location tracking, and audio feeds during emergencies.
+            Guardians receive your SOS alerts and messages.
         </p>
 
         <form onSubmit={addGuardian} className="relative z-10 flex gap-3 max-w-lg">
             <input 
                 type="email" 
                 placeholder="Enter guardian email"
-                className="flex-1 bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                className="flex-1 bg-slate-800/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-500 focus:border-blue-500 outline-none transition-all"
                 value={emailInput}
                 onChange={e => setEmailInput(e.target.value)}
                 required
@@ -95,7 +92,11 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
                 {loading ? '...' : 'Add'}
             </button>
         </form>
-        {msg && <p className={`mt-4 text-sm font-medium animate-fade-in ${msg.includes('success') ? 'text-green-400' : 'text-amber-400'}`}>{msg}</p>}
+        {msg && (
+            <div className={`mt-4 p-3 rounded-xl text-sm font-bold border ${msg.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                {msg.text}
+            </div>
+        )}
       </div>
 
       <div className="grid gap-4">
@@ -117,18 +118,15 @@ const Guardians: React.FC<GuardiansProps> = ({ currentUser }) => {
                                   <div className="text-gray-200 font-medium">{g}</div>
                                   <div className="text-xs text-green-400 flex items-center gap-1">
                                     <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
-                                    Active
+                                    Verified
                                   </div>
                               </div>
                           </div>
                           <button 
                             onClick={() => removeGuardian(g)}
                             className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
-                            title="Remove Guardian"
                           >
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.49 1.478 47.4 47.4 0 00-15.28 0 .75.75 0 01-.49-1.478 48.809 48.809 0 013.876-.512v-.227c0-1.005.81-1.847 1.819-1.936.85-.075 1.706-.115 2.568-.115.862 0 1.718.04 2.568.115 1.01.089 1.819.93 1.819 1.936zm-3.75 2.5a.75.75 0 00-1.5 0v7a.75.75 0 001.5 0v-7z" clipRule="evenodd" />
-                              </svg>
+                              Remove
                           </button>
                       </div>
                   ))}
